@@ -16,6 +16,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
+import { deletePlayer } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -29,6 +30,8 @@ import {
   Settings,
   Megaphone,
   Bell,
+  Shield,
+  Trash2,
 } from "lucide-react";
 
 const COLORS = {
@@ -288,6 +291,8 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   const [newPin, setNewPin] = useState("");
   const [newError, setNewError] = useState("");
 
+  const adminCount = players.filter((p) => p.isAdmin).length;
+
   const save = async () => {
     setError("");
     if (current !== me.pin) return setError("El PIN actual no coincide.");
@@ -308,6 +313,29 @@ function ChangePinModal({ me, players, onClose, showToast }) {
     setNewName("");
     setNewPin("");
     showToast(`${newName.trim()} fue agregado.`);
+  };
+
+  const toggleAdmin = async (p) => {
+    if (p.id === me.id && p.isAdmin && adminCount === 1) {
+      showToast("Sos el único admin, no te podés sacar el rol.");
+      return;
+    }
+    await updatePlayer(p.id, { isAdmin: !p.isAdmin });
+    showToast(p.isAdmin ? `${p.name} ya no es admin.` : `${p.name} ahora es admin.`);
+  };
+
+  const removePlayer = async (p) => {
+    if (p.id === me.id) {
+      showToast("No te podés eliminar a vos mismo.");
+      return;
+    }
+    if (p.isAdmin && adminCount === 1) {
+      showToast("Es el único admin, primero asigná otro admin.");
+      return;
+    }
+    if (!window.confirm(`¿Eliminar a ${p.name}? No se puede deshacer.`)) return;
+    await deletePlayer(p.id);
+    showToast(`${p.name} fue eliminado.`);
   };
 
   const enableNotifs = async () => {
@@ -343,15 +371,51 @@ function ChangePinModal({ me, players, onClose, showToast }) {
         </div>
 
         {me.isAdmin && (
-          <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
-            <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Agregar jugador (admin)</div>
-            <div className="space-y-2.5">
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre del jugador" className="w-full border rounded-lg px-3 py-2 text-sm" />
-              <input value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="PIN inicial (4 dígitos)" inputMode="numeric" className="w-full border rounded-lg px-3 py-2 text-sm tracking-widest" />
-              {newError && <div className="text-xs" style={{ color: COLORS.clay }}>{newError}</div>}
-              <button onClick={addNewPlayer} className="w-full py-2.5 rounded-lg font-semibold text-sm" style={{ background: COLORS.courtDeep, color: "white" }}>Agregar jugador</button>
+          <>
+            <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
+              <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Agregar jugador (admin)</div>
+              <div className="space-y-2.5">
+                <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nombre del jugador" className="w-full border rounded-lg px-3 py-2 text-sm" />
+                <input value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="PIN inicial (4 dígitos)" inputMode="numeric" className="w-full border rounded-lg px-3 py-2 text-sm tracking-widest" />
+                {newError && <div className="text-xs" style={{ color: COLORS.clay }}>{newError}</div>}
+                <button onClick={addNewPlayer} className="w-full py-2.5 rounded-lg font-semibold text-sm" style={{ background: COLORS.courtDeep, color: "white" }}>Agregar jugador</button>
+              </div>
             </div>
-          </div>
+
+            <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
+              <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Gestionar jugadores (admin)</div>
+              <div className="space-y-2">
+                {players.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 bg-black/[0.03] rounded-lg px-2.5 py-2">
+                    <div className="flex-1 text-sm font-medium" style={{ color: COLORS.ink }}>
+                      {p.name} {p.id === me.id && <span className="text-[10px] text-black/40">(vos)</span>}
+                    </div>
+                    {p.isAdmin && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,255,63,0.3)", color: "#4d6b00" }}>
+                        ADMIN
+                      </span>
+                    )}
+                    <button
+                      onClick={() => toggleAdmin(p)}
+                      title={p.isAdmin ? "Quitar admin" : "Hacer admin"}
+                      className="p-1.5 rounded-md hover:bg-black/5"
+                      style={{ color: COLORS.courtDeep }}
+                    >
+                      <Shield size={14} />
+                    </button>
+                    <button
+                      onClick={() => removePlayer(p)}
+                      title="Eliminar jugador"
+                      className="p-1.5 rounded-md hover:bg-black/5"
+                      style={{ color: COLORS.clay }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
