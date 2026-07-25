@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -185,7 +186,6 @@ function Header({ me, onLogout, onSettings }) {
 
 function AuthScreen({ players, onLogin, showToast }) {
   const isFirstEver = players.length === 0;
-  const [mode, setMode] = useState(isFirstEver ? "register" : "login");
   const [name, setName] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [pin, setPin] = useState("");
@@ -231,7 +231,7 @@ function AuthScreen({ players, onLogin, showToast }) {
           </div>
         )}
 
-        {mode === "login" ? (
+        {!isFirstEver ? (
           <div className="space-y-3">
             <select
               value={selectedId}
