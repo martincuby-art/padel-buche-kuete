@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap");
+
+.font-display {
+  font-family: "Bebas Neue", "Inter", sans-serif;
+  letter-spacing: 0.03em;
+}
+.font-body {
+  font-family: "Inter", sans-serif;
+}
