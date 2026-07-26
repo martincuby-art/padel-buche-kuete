@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -17,7 +16,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
-import { deletePlayer } from "../lib/data";
+import { deletePlayer, deleteAllMatches } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -520,6 +519,16 @@ function NuevoPartidoView({ players, me, matches, showToast, goRanking }) {
     if (new Set(ids.filter(Boolean)).size < 4 || ids.some((x) => !x)) return setError("Elegí 4 jugadores distintos.");
     if (scoreA === "" || scoreB === "" || scoreA === scoreB) return setError("Cargá un resultado válido (sin empate).");
 
+    const idSet = new Set(ids);
+    const duplicate = matches.some((m) => {
+      if (m.date !== date) return false;
+      const existingSet = new Set([...m.teamA, ...m.teamB]);
+      if (existingSet.size !== idSet.size) return false;
+      for (const id of idSet) if (!existingSet.has(id)) return false;
+      return true;
+    });
+    if (duplicate) return setError("Ya se cargó un partido con estos mismos jugadores en esta fecha.");
+
     const winnerTeam = Number(scoreA) > Number(scoreB) ? "A" : "B";
     setBusy(true);
     try {
@@ -609,44 +618,75 @@ function HistorialView({ players, matches, me, showToast }) {
     showToast(nowConfirmed ? "¡Resultado confirmado! Puntos actualizados." : "Confirmación registrada.");
   };
 
+  const clearHistory = async () => {
+    if (!window.confirm("¿Borrar TODO el historial de partidos? Esto afecta el ranking y no se puede deshacer.")) return;
+    await deleteAllMatches();
+    showToast("Historial borrado.");
+  };
+
   const sorted = [...matches].sort((a, b) => b.createdAt - a.createdAt);
+  const groups = [];
+  sorted.forEach((m) => {
+    let g = groups.find((g) => g.date === m.date);
+    if (!g) {
+      g = { date: m.date, items: [] };
+      groups.push(g);
+    }
+    g.items.push(m);
+  });
+  groups.sort((a, b) => (a.date < b.date ? 1 : -1));
 
   return (
     <div className="pt-5">
-      <div className="flex items-center gap-2 mb-4">
-        <Clock size={18} style={{ color: COLORS.courtDeep }} />
-        <h2 className="font-display text-2xl" style={{ color: COLORS.ink }}>HISTORIAL</h2>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Clock size={18} style={{ color: COLORS.courtDeep }} />
+          <h2 className="font-display text-2xl" style={{ color: COLORS.ink }}>HISTORIAL</h2>
+        </div>
+        {me?.isAdmin && matches.length > 0 && (
+          <button onClick={clearHistory} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: COLORS.clay }}>
+            <Trash2 size={12} /> Borrar todo
+          </button>
+        )}
       </div>
 
       {sorted.length === 0 && <EmptyState text="Todavía no se cargó ningún partido." />}
 
-      <div className="space-y-3">
-        {sorted.map((m) => {
-          const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
-          const canConfirm = m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
-
-          return (
-            <div key={m.id} className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
-              <div className="flex items-center justify-between text-[11px] text-black/40 mb-2">
-                <span>{m.date}</span>
-                <StatusPill status={m.status} />
-              </div>
-              <div className="flex items-center justify-between mb-1.5">
-                <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
-                <div className="font-display text-lg px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
-                <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
-              </div>
-              {canConfirm && (
-                <button onClick={() => confirm(m)} className="mt-3 w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5" style={{ background: COLORS.lime, color: COLORS.ink }}>
-                  <Check size={14} /> Confirmar resultado
-                </button>
-              )}
-              {m.status === "pendiente" && !canConfirm && (
-                <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival</div>
-              )}
+      <div className="space-y-5">
+        {groups.map((g) => (
+          <div key={g.date}>
+            <div className="text-xs font-semibold mb-2 sticky top-0 py-1" style={{ color: COLORS.courtDeep }}>
+              {fmtDate(g.date)}
             </div>
-          );
-        })}
+            <div className="space-y-3">
+              {g.items.map((m) => {
+                const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
+                const canConfirm = m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
+
+                return (
+                  <div key={m.id} className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
+                    <div className="flex items-center justify-end text-[11px] text-black/40 mb-2">
+                      <StatusPill status={m.status} />
+                    </div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
+                      <div className="font-display text-lg px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
+                      <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
+                    </div>
+                    {canConfirm && (
+                      <button onClick={() => confirm(m)} className="mt-3 w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5" style={{ background: COLORS.lime, color: COLORS.ink }}>
+                        <Check size={14} /> Confirmar resultado
+                      </button>
+                    )}
+                    {m.status === "pendiente" && !canConfirm && (
+                      <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
