@@ -16,7 +16,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
-import { deletePlayer, deleteAllMatches } from "../lib/data";
+import { deletePlayer, deleteAllMatches, deleteNews } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -32,6 +32,8 @@ import {
   Bell,
   Shield,
   Trash2,
+  Share2,
+  Ban,
 } from "lucide-react";
 
 const COLORS = {
@@ -43,7 +45,12 @@ const COLORS = {
 };
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Asuncion",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 function addMonths(dateStr, months) {
   const d = new Date(dateStr + "T00:00:00");
@@ -66,6 +73,7 @@ export default function PadelApp() {
   const [tab, setTab] = useState("ranking");
   const [toast, setToast] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
   const [lastNewsRead, setLastNewsRead] = useState(0);
 
   // Anonymous auth (required by Firestore rules) + restore local session
@@ -127,14 +135,24 @@ export default function PadelApp() {
 
   const me = players.find((p) => p.id === sessionId);
 
-  if (!sessionId || !me) {
-    return <AuthScreen players={players} onLogin={login} showToast={showToast} />;
+  if (showAuth) {
+    return (
+      <AuthScreen
+        players={players}
+        onLogin={(id) => {
+          login(id);
+          setShowAuth(false);
+        }}
+        onClose={() => setShowAuth(false)}
+        showToast={showToast}
+      />
+    );
   }
 
   return (
     <div style={{ background: COLORS.chalk }} className="min-h-screen font-body pb-24">
-      <Header me={me} onLogout={logout} onSettings={() => setShowSettings(true)} />
-      {showSettings && (
+      <Header me={me} onLogout={logout} onSettings={() => setShowSettings(true)} onIngresar={() => setShowAuth(true)} />
+      {showSettings && me && (
         <ChangePinModal me={me} players={players} onClose={() => setShowSettings(false)} showToast={showToast} />
       )}
       {toast && (
@@ -150,7 +168,11 @@ export default function PadelApp() {
           <RankingView players={players} matches={matches} tournament={tournament} me={me} showToast={showToast} />
         )}
         {tab === "nuevo" && (
-          <NuevoPartidoView players={players} me={me} matches={matches} showToast={showToast} goRanking={() => openTab("historial")} />
+          me ? (
+            <NuevoPartidoView players={players} me={me} matches={matches} showToast={showToast} goRanking={() => openTab("historial")} />
+          ) : (
+            <GuestLocked onIngresar={() => setShowAuth(true)} />
+          )
         )}
         {tab === "historial" && <HistorialView players={players} matches={matches} me={me} showToast={showToast} />}
         {tab === "noticias" && (
@@ -162,7 +184,7 @@ export default function PadelApp() {
   );
 }
 
-function Header({ me, onLogout, onSettings }) {
+function Header({ me, onLogout, onSettings, onIngresar }) {
   return (
     <div style={{ background: COLORS.courtDeep }} className="relative overflow-hidden pb-5 pt-6 px-4">
       <div className="absolute inset-x-0 top-1/2 h-px opacity-40" style={{ background: COLORS.lime }} />
@@ -172,18 +194,28 @@ function Header({ me, onLogout, onSettings }) {
           <div className="font-display text-4xl leading-none" style={{ color: COLORS.lime }}>PÁDEL</div>
           <div className="font-display text-2xl leading-none text-white/90">BUCHE KUETE</div>
         </div>
-        <div className="flex items-center gap-3 mt-1">
-          <button onClick={onSettings} className="text-white/70 hover:text-white"><Settings size={16} /></button>
-          <button onClick={onLogout} className="flex items-center gap-1 text-xs text-white/70 hover:text-white">
-            <LogOut size={14} /> {me?.name}
+        {me ? (
+          <div className="flex items-center gap-3 mt-1">
+            <button onClick={onSettings} className="text-white/70 hover:text-white"><Settings size={16} /></button>
+            <button onClick={onLogout} className="flex items-center gap-1 text-xs text-white/70 hover:text-white">
+              <LogOut size={14} /> {me?.name}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onIngresar}
+            className="mt-1 px-3 py-1.5 rounded-full text-xs font-semibold"
+            style={{ background: COLORS.lime, color: COLORS.ink }}
+          >
+            Ingresar
           </button>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function AuthScreen({ players, onLogin, showToast }) {
+function AuthScreen({ players, onLogin, onClose, showToast }) {
   const isFirstEver = players.length === 0;
   const [name, setName] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -215,7 +247,12 @@ function AuthScreen({ players, onLogin, showToast }) {
   };
 
   return (
-    <div style={{ background: COLORS.courtDeep }} className="min-h-screen flex flex-col items-center justify-center px-6 font-body">
+    <div style={{ background: COLORS.courtDeep }} className="min-h-screen flex flex-col items-center justify-center px-6 font-body relative">
+      {!isFirstEver && (
+        <button onClick={onClose} className="absolute top-5 right-5 text-white/60 hover:text-white">
+          <X size={22} />
+        </button>
+      )}
       <div className="font-display text-5xl text-center leading-none mb-1" style={{ color: COLORS.lime }}>PÁDEL</div>
       <div className="font-display text-2xl text-white/90 mb-8">BUCHE KUETE</div>
 
@@ -437,10 +474,26 @@ function RankingView({ players, matches, tournament, me, showToast }) {
     : [];
 
   const pointsById = {};
-  players.forEach((p) => (pointsById[p.id] = 0));
+  const statsById = {};
+  players.forEach((p) => {
+    pointsById[p.id] = 0;
+    statsById[p.id] = { played: 0, wins: 0 };
+  });
   confirmedInWindow.forEach((m) => {
-    m.teamA.forEach((id) => (pointsById[id] = (pointsById[id] || 0) + m.scoreA));
-    m.teamB.forEach((id) => (pointsById[id] = (pointsById[id] || 0) + m.scoreB));
+    m.teamA.forEach((id) => {
+      pointsById[id] = (pointsById[id] || 0) + m.scoreA;
+      if (statsById[id]) {
+        statsById[id].played += 1;
+        if (m.winnerTeam === "A") statsById[id].wins += 1;
+      }
+    });
+    m.teamB.forEach((id) => {
+      pointsById[id] = (pointsById[id] || 0) + m.scoreB;
+      if (statsById[id]) {
+        statsById[id].played += 1;
+        if (m.winnerTeam === "B") statsById[id].wins += 1;
+      }
+    });
   });
 
   const ranked = [...players].sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
@@ -483,20 +536,59 @@ function RankingView({ players, matches, tournament, me, showToast }) {
 
       {ranked.length === 0 && <EmptyState text="Todavía no hay jugadores en la cancha." />}
 
+      {ranked.length > 0 && (
+        <div className="flex items-center gap-2 px-3 mb-1.5 text-[10px] font-semibold text-black/35">
+          <div className="w-7 shrink-0" />
+          <div className="flex-1">JUGADOR</div>
+          <div className="w-8 text-center shrink-0">PJ</div>
+          <div className="w-12 text-center shrink-0">EFEC%</div>
+          <div className="w-9 text-right shrink-0">PTS</div>
+        </div>
+      )}
+
       <div className="space-y-2">
-        {ranked.map((p, i) => (
-          <div key={p.id} className="flex items-center gap-3 bg-white rounded-xl px-3 py-3 shadow-sm border" style={{ borderColor: i === 0 ? COLORS.lime : "#eee" }}>
-            <div className="w-8 h-8 rounded-full flex items-center justify-center font-display text-base shrink-0" style={{ background: i === 0 ? COLORS.lime : COLORS.courtDeep, color: i === 0 ? COLORS.ink : "white" }}>
-              {i + 1}
+        {ranked.map((p, i) => {
+          const st = statsById[p.id] || { played: 0, wins: 0 };
+          const pct = st.played > 0 ? Math.round((st.wins / st.played) * 100) : 0;
+          return (
+            <div key={p.id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-3 shadow-sm border" style={{ borderColor: i === 0 ? COLORS.lime : "#eee" }}>
+              <div className="w-7 h-7 rounded-full flex items-center justify-center font-display text-sm shrink-0" style={{ background: i === 0 ? COLORS.lime : COLORS.courtDeep, color: i === 0 ? COLORS.ink : "white" }}>
+                {i + 1}
+              </div>
+              <div className="flex-1 font-semibold text-sm truncate" style={{ color: COLORS.ink }}>{p.name}</div>
+              <div className="w-8 text-center text-xs text-black/45 shrink-0">{st.played}</div>
+              <div className="w-12 text-center text-xs text-black/45 shrink-0">{pct}%</div>
+              <div className="text-right w-9 shrink-0">
+                <div className="font-display text-lg leading-none" style={{ color: COLORS.courtDeep }}>{pointsById[p.id] || 0}</div>
+              </div>
             </div>
-            <div className="flex-1 font-semibold text-sm" style={{ color: COLORS.ink }}>{p.name}</div>
-            <div className="text-right">
-              <div className="font-display text-xl leading-none" style={{ color: COLORS.courtDeep }}>{pointsById[p.id] || 0}</div>
-              <div className="text-[10px] text-black/40 -mt-0.5">pts</div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function GuestLocked({ onIngresar }) {
+  return (
+    <div className="pt-16 px-4 text-center">
+      <div
+        className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+        style={{ background: "rgba(14,75,68,0.08)" }}
+      >
+        <Ban size={24} style={{ color: COLORS.courtDeep }} />
+      </div>
+      <div className="font-display text-xl mb-1.5" style={{ color: COLORS.ink }}>NECESITÁS INICIAR SESIÓN</div>
+      <p className="text-sm text-black/50 mb-5 leading-relaxed max-w-xs mx-auto">
+        Para cargar un partido primero tenés que ingresar con tu usuario y PIN.
+      </p>
+      <button
+        onClick={onIngresar}
+        className="px-5 py-2.5 rounded-lg font-semibold text-sm"
+        style={{ background: COLORS.courtDeep, color: "white" }}
+      >
+        Ingresar
+      </button>
     </div>
   );
 }
@@ -602,6 +694,75 @@ function PlayerSelect({ value, onChange, players, placeholder }) {
   );
 }
 
+function MatchCard({ match: m, nameOf, me, onConfirm, onReject }) {
+  const [editing, setEditing] = useState(false);
+  const [editA, setEditA] = useState(String(m.scoreA));
+  const [editB, setEditB] = useState(String(m.scoreB));
+  const [err, setErr] = useState("");
+
+  const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
+  const canAct = !!me && m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
+
+  const saveCorrection = () => {
+    setErr("");
+    if (editA === "" || editB === "" || editA === editB) {
+      setErr("Cargá un resultado válido (sin empate).");
+      return;
+    }
+    onReject(m, Number(editA), Number(editB));
+    setEditing(false);
+  };
+
+  return (
+    <div className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
+      <div className="flex items-center justify-end text-[11px] text-black/40 mb-2">
+        <StatusPill status={m.status} />
+      </div>
+      <div className="flex items-center justify-between mb-1.5">
+        <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
+        {!editing ? (
+          <div className="font-display text-lg px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-1">
+            <input value={editA} onChange={(e) => setEditA(e.target.value.replace(/\D/g, ""))} className="w-10 border rounded-md text-center text-sm py-1" />
+            <span className="text-black/30">–</span>
+            <input value={editB} onChange={(e) => setEditB(e.target.value.replace(/\D/g, ""))} className="w-10 border rounded-md text-center text-sm py-1" />
+          </div>
+        )}
+        <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
+      </div>
+
+      {editing && (
+        <div className="mt-2">
+          {err && <div className="text-xs mb-2" style={{ color: COLORS.clay }}>{err}</div>}
+          <div className="flex gap-2">
+            <button onClick={saveCorrection} className="flex-1 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>
+              Guardar corrección
+            </button>
+            <button onClick={() => setEditing(false)} className="px-3 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: "#ddd", color: "#666" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!editing && canAct && (
+        <div className="mt-3 flex gap-2">
+          <button onClick={() => onConfirm(m)} className="flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5" style={{ background: COLORS.lime, color: COLORS.ink }}>
+            <Check size={14} /> Confirmar
+          </button>
+          <button onClick={() => setEditing(true)} className="flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 border" style={{ borderColor: COLORS.clay, color: COLORS.clay }}>
+            <X size={14} /> Rechazar
+          </button>
+        </div>
+      )}
+      {!editing && m.status === "pendiente" && !canAct && (
+        <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival</div>
+      )}
+    </div>
+  );
+}
+
 function HistorialView({ players, matches, me, showToast }) {
   const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
 
@@ -616,6 +777,19 @@ function HistorialView({ players, matches, me, showToast }) {
     const status = nowConfirmed ? "confirmado" : "pendiente";
     await updateMatch(match.id, { confirmedBy, status });
     showToast(nowConfirmed ? "¡Resultado confirmado! Puntos actualizados." : "Confirmación registrada.");
+  };
+
+  const reject = async (match, newScoreA, newScoreB) => {
+    const winnerTeam = newScoreA > newScoreB ? "A" : "B";
+    await updateMatch(match.id, {
+      scoreA: newScoreA,
+      scoreB: newScoreB,
+      winnerTeam,
+      submittedBy: me.id,
+      confirmedBy: [me.id],
+      status: "pendiente",
+    });
+    showToast("Resultado corregido. Ahora el otro equipo tiene que confirmarlo.");
   };
 
   const clearHistory = async () => {
@@ -659,31 +833,9 @@ function HistorialView({ players, matches, me, showToast }) {
               {fmtDate(g.date)}
             </div>
             <div className="space-y-3">
-              {g.items.map((m) => {
-                const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
-                const canConfirm = m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
-
-                return (
-                  <div key={m.id} className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
-                    <div className="flex items-center justify-end text-[11px] text-black/40 mb-2">
-                      <StatusPill status={m.status} />
-                    </div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
-                      <div className="font-display text-lg px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
-                      <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
-                    </div>
-                    {canConfirm && (
-                      <button onClick={() => confirm(m)} className="mt-3 w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5" style={{ background: COLORS.lime, color: COLORS.ink }}>
-                        <Check size={14} /> Confirmar resultado
-                      </button>
-                    )}
-                    {m.status === "pendiente" && !canConfirm && (
-                      <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival</div>
-                    )}
-                  </div>
-                );
-              })}
+              {g.items.map((m) => (
+                <MatchCard key={m.id} match={m} nameOf={nameOf} me={me} onConfirm={confirm} onReject={reject} />
+              ))}
             </div>
           </div>
         ))}
@@ -746,6 +898,17 @@ function NoticiasView({ news, me, showToast }) {
     }
   };
 
+  const removeNews = async (n) => {
+    if (!window.confirm(`¿Eliminar la noticia "${n.title}"?`)) return;
+    await deleteNews(n.id);
+    showToast("Noticia eliminada.");
+  };
+
+  const shareWhatsapp = (n) => {
+    const text = `📰 *${n.title}*\n\n${n.body}\n\n— Pádel Buche Kuete`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  };
+
   return (
     <div className="pt-5">
       <div className="flex items-center gap-2 mb-4">
@@ -777,7 +940,16 @@ function NoticiasView({ news, me, showToast }) {
               <div className="text-[10px] text-black/40 shrink-0 ml-2">{fmtDate(n.date)}</div>
             </div>
             <div className="text-xs text-black/60 whitespace-pre-wrap leading-relaxed">{n.body}</div>
-            <div className="text-[10px] text-black/30 mt-2">— {n.authorName}</div>
+            <div className="flex items-center gap-4 mt-3">
+              <button onClick={() => shareWhatsapp(n)} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: "#22a355" }}>
+                <Share2 size={12} /> Compartir
+              </button>
+              {me?.isAdmin && (
+                <button onClick={() => removeNews(n)} className="text-[11px] font-semibold flex items-center gap-1 ml-auto" style={{ color: COLORS.clay }}>
+                  <Trash2 size={12} /> Eliminar
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -786,10 +958,12 @@ function NoticiasView({ news, me, showToast }) {
 }
 
 function BottomNav({ tab, setTab, matches, me, news, lastNewsRead }) {
-  const pendingForMe = matches.filter((m) => {
-    const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
-    return m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
-  }).length;
+  const pendingForMe = me
+    ? matches.filter((m) => {
+        const opponentTeam = m.submittedBy === m.teamA[0] || m.submittedBy === m.teamA[1] ? m.teamB : m.teamA;
+        return m.status === "pendiente" && opponentTeam.includes(me.id) && !m.confirmedBy.includes(me.id);
+      }).length
+    : 0;
 
   const unreadNews = news.filter((n) => n.createdAt > lastNewsRead).length;
 
