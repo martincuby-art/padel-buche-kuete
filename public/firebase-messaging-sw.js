@@ -16,7 +16,7 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   const { title, body } = payload.notification || {};
-  self.registration.showNotification(title || "Pádel Buche Kuete", {
+  self.registration.showNotification(title || "APPadel Buche Kuete", {
     body: body || "Hay una noticia nueva.",
     icon: "/icon-192.png",
   });
