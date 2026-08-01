@@ -75,6 +75,7 @@ export default function PadelApp() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [lastNewsRead, setLastNewsRead] = useState(0);
+  const [highlightNewsId, setHighlightNewsId] = useState(null);
 
   // Anonymous auth (required by Firestore rules) + restore local session
   useEffect(() => {
@@ -84,6 +85,15 @@ export default function PadelApp() {
     });
     setSessionId(localStorage.getItem("padel_session_player_id"));
     setLastNewsRead(Number(localStorage.getItem("padel_last_news_read") || 0));
+
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("tab");
+    const id = params.get("id");
+    if (t && ["ranking", "nuevo", "historial", "noticias"].includes(t)) {
+      setTab(t);
+      if (t === "noticias" && id) setHighlightNewsId(id);
+    }
+
     return unsub;
   }, []);
 
@@ -176,7 +186,7 @@ export default function PadelApp() {
         )}
         {tab === "historial" && <HistorialView players={players} matches={matches} me={me} showToast={showToast} />}
         {tab === "noticias" && (
-          <NoticiasView news={news} me={me} showToast={showToast} onOpen={() => openTab("noticias")} />
+          <NoticiasView news={news} me={me} showToast={showToast} onOpen={() => openTab("noticias")} highlightId={highlightNewsId} />
         )}
       </div>
       <BottomNav tab={tab} setTab={openTab} matches={matches} me={me} news={news} lastNewsRead={lastNewsRead} />
@@ -191,8 +201,8 @@ function Header({ me, onLogout, onSettings, onIngresar }) {
       <div className="absolute left-1/2 top-2 bottom-2 w-px opacity-30" style={{ background: COLORS.lime }} />
       <div className="relative flex items-start justify-between max-w-md mx-auto">
         <div>
-          <div className="font-display text-4xl leading-none" style={{ color: COLORS.lime }}>PÁDEL</div>
-          <div className="font-display text-2xl leading-none text-white/90">BUCHE KUETE</div>
+          <div className="font-display text-4xl leading-none" style={{ color: COLORS.lime }}>APPadel</div>
+          <div className="font-display text-2xl leading-none text-white/90">Buche Kuete</div>
         </div>
         {me ? (
           <div className="flex items-center gap-3 mt-1">
@@ -253,8 +263,8 @@ function AuthScreen({ players, onLogin, onClose, showToast }) {
           <X size={22} />
         </button>
       )}
-      <div className="font-display text-5xl text-center leading-none mb-1" style={{ color: COLORS.lime }}>PÁDEL</div>
-      <div className="font-display text-2xl text-white/90 mb-8">BUCHE KUETE</div>
+      <div className="font-display text-5xl text-center leading-none mb-1" style={{ color: COLORS.lime }}>APPadel</div>
+      <div className="font-display text-2xl text-white/90 mb-8">Buche Kuete</div>
 
       <div className="w-full max-w-xs bg-white/5 border border-white/10 rounded-2xl p-5">
         {isFirstEver ? (
@@ -871,11 +881,17 @@ function EmptyState({ text }) {
   );
 }
 
-function NoticiasView({ news, me, showToast }) {
+function NoticiasView({ news, me, showToast, highlightId }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!highlightId || news.length === 0) return;
+    const el = document.getElementById(`news-${highlightId}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId, news]);
 
   const publish = async () => {
     setError("");
@@ -905,7 +921,8 @@ function NoticiasView({ news, me, showToast }) {
   };
 
   const shareWhatsapp = (n) => {
-    const text = `📰 *${n.title}*\n\n${n.body}\n\n— Pádel Buche Kuete`;
+    const url = `${window.location.origin}/?tab=noticias&id=${n.id}`;
+    const text = `📰 *${n.title}* — APPadel Buche Kuete\n${url}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -934,7 +951,12 @@ function NoticiasView({ news, me, showToast }) {
 
       <div className="space-y-3">
         {news.map((n) => (
-          <div key={n.id} className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
+          <div
+            key={n.id}
+            id={`news-${n.id}`}
+            className="bg-white rounded-xl p-4 shadow-sm border transition-colors"
+            style={{ borderColor: n.id === highlightId ? COLORS.lime : "#eee", borderWidth: n.id === highlightId ? 2 : 1 }}
+          >
             <div className="flex items-center justify-between mb-1.5">
               <div className="font-semibold text-sm" style={{ color: COLORS.ink }}>{n.title}</div>
               <div className="text-[10px] text-black/40 shrink-0 ml-2">{fmtDate(n.date)}</div>

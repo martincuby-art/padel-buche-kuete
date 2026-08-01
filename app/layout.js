@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Pádel Buche Kuete",
+  title: "APPadel Buche Kuete",
   description: "Ranking, resultados y noticias del grupo",
   manifest: "/manifest.json",
   icons: {
