@@ -16,7 +16,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
-import { deletePlayer, deleteAllMatches, deleteNews } from "../lib/data";
+import { deletePlayer, deleteAllMatches, deleteNews, deleteMatch } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -285,7 +285,7 @@ function AuthScreen({ players, onLogin, onClose, showToast }) {
               className="w-full bg-white/10 text-white rounded-lg px-3 py-2.5 text-sm outline-none"
             >
               <option value="" className="text-black">Elegí tu nombre</option>
-              {players.map((p) => (
+              {players.filter((p) => !p.isGuest).map((p) => (
                 <option key={p.id} value={p.id} className="text-black">{p.name}</option>
               ))}
             </select>
@@ -338,6 +338,7 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   const [newError, setNewError] = useState("");
 
   const adminCount = players.filter((p) => p.isAdmin).length;
+  const hasGuest = players.some((p) => p.isGuest);
 
   const save = async () => {
     setError("");
@@ -359,6 +360,12 @@ function ChangePinModal({ me, players, onClose, showToast }) {
     setNewName("");
     setNewPin("");
     showToast(`${newName.trim()} fue agregado.`);
+  };
+
+  const addGuestPlayer = async () => {
+    if (hasGuest) return;
+    await addPlayer({ name: "Invitado", pin: "0000", isAdmin: false, isGuest: true, fcmTokens: [] });
+    showToast("Jugador Invitado habilitado.");
   };
 
   const toggleAdmin = async (p) => {
@@ -428,6 +435,18 @@ function ChangePinModal({ me, players, onClose, showToast }) {
               </div>
             </div>
 
+            {!hasGuest && (
+              <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
+                <div className="text-xs font-semibold mb-1" style={{ color: COLORS.courtDeep }}>Jugador Invitado</div>
+                <div className="text-[11px] text-black/45 mb-2 leading-relaxed">
+                  Placeholder para invitados ocasionales: no suma puntos, no aparece en el ranking, y puede repetir compañero el mismo día.
+                </div>
+                <button onClick={addGuestPlayer} className="w-full py-2 rounded-lg text-xs font-semibold" style={{ background: "rgba(212,255,63,0.35)", color: "#4d6b00" }}>
+                  Habilitar jugador Invitado
+                </button>
+              </div>
+            )}
+
             <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
               <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Gestionar jugadores (admin)</div>
               <div className="space-y-2">
@@ -436,19 +455,26 @@ function ChangePinModal({ me, players, onClose, showToast }) {
                     <div className="flex-1 text-sm font-medium" style={{ color: COLORS.ink }}>
                       {p.name} {p.id === me.id && <span className="text-[10px] text-black/40">(vos)</span>}
                     </div>
+                    {p.isGuest && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(14,75,68,0.1)", color: COLORS.courtDeep }}>
+                        INVITADO
+                      </span>
+                    )}
                     {p.isAdmin && (
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,255,63,0.3)", color: "#4d6b00" }}>
                         ADMIN
                       </span>
                     )}
-                    <button
-                      onClick={() => toggleAdmin(p)}
-                      title={p.isAdmin ? "Quitar admin" : "Hacer admin"}
-                      className="p-1.5 rounded-md hover:bg-black/5"
-                      style={{ color: COLORS.courtDeep }}
-                    >
-                      <Shield size={14} />
-                    </button>
+                    {!p.isGuest && (
+                      <button
+                        onClick={() => toggleAdmin(p)}
+                        title={p.isAdmin ? "Quitar admin" : "Hacer admin"}
+                        className="p-1.5 rounded-md hover:bg-black/5"
+                        style={{ color: COLORS.courtDeep }}
+                      >
+                        <Shield size={14} />
+                      </button>
+                    )}
                     <button
                       onClick={() => removePlayer(p)}
                       title="Eliminar jugador"
@@ -506,7 +532,7 @@ function RankingView({ players, matches, tournament, me, showToast }) {
     });
   });
 
-  const ranked = [...players].sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
+  const ranked = [...players].filter((p) => !p.isGuest).sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
 
   const saveTournament = async () => {
     if (!editingDate) return;
@@ -621,15 +647,22 @@ function NuevoPartidoView({ players, me, matches, showToast, goRanking }) {
     if (new Set(ids.filter(Boolean)).size < 4 || ids.some((x) => !x)) return setError("Elegí 4 jugadores distintos.");
     if (scoreA === "" || scoreB === "" || scoreA === scoreB) return setError("Cargá un resultado válido (sin empate).");
 
-    const idSet = new Set(ids);
-    const duplicate = matches.some((m) => {
+    const isGuestId = (id) => players.find((p) => p.id === id)?.isGuest;
+    const pairKey = (a, b) => [a, b].sort().join("|");
+    const newPairA = pairKey(me.id, teamA2);
+    const newPairB = pairKey(teamB1, teamB2);
+    const pairAHasGuest = isGuestId(me.id) || isGuestId(teamA2);
+    const pairBHasGuest = isGuestId(teamB1) || isGuestId(teamB2);
+    const repeatedPair = matches.some((m) => {
       if (m.date !== date) return false;
-      const existingSet = new Set([...m.teamA, ...m.teamB]);
-      if (existingSet.size !== idSet.size) return false;
-      for (const id of idSet) if (!existingSet.has(id)) return false;
-      return true;
+      const exA = pairKey(m.teamA[0], m.teamA[1]);
+      const exB = pairKey(m.teamB[0], m.teamB[1]);
+      let clash = false;
+      if (!pairAHasGuest && (exA === newPairA || exB === newPairA)) clash = true;
+      if (!pairBHasGuest && (exA === newPairB || exB === newPairB)) clash = true;
+      return clash;
     });
-    if (duplicate) return setError("Ya se cargó un partido con estos mismos jugadores en esta fecha.");
+    if (repeatedPair) return setError("Esa pareja de compañeros ya jugó junta en esta fecha. No se repiten compañeros el mismo día.");
 
     const winnerTeam = Number(scoreA) > Number(scoreB) ? "A" : "B";
     setBusy(true);
@@ -704,7 +737,7 @@ function PlayerSelect({ value, onChange, players, placeholder }) {
   );
 }
 
-function MatchCard({ match: m, nameOf, me, onConfirm, onReject }) {
+function MatchCard({ match: m, nameOf, me, onConfirm, onReject, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [editA, setEditA] = useState(String(m.scoreA));
   const [editB, setEditB] = useState(String(m.scoreB));
@@ -725,7 +758,12 @@ function MatchCard({ match: m, nameOf, me, onConfirm, onReject }) {
 
   return (
     <div className="bg-white rounded-xl p-4 shadow-sm border" style={{ borderColor: "#eee" }}>
-      <div className="flex items-center justify-end text-[11px] text-black/40 mb-2">
+      <div className="flex items-center justify-between text-[11px] text-black/40 mb-2">
+        {me?.isAdmin ? (
+          <button onClick={() => onDelete(m)} className="flex items-center gap-1 hover:opacity-70" style={{ color: COLORS.clay }}>
+            <Trash2 size={11} /> Borrar
+          </button>
+        ) : <span />}
         <StatusPill status={m.status} />
       </div>
       <div className="flex items-center justify-between mb-1.5">
@@ -802,6 +840,12 @@ function HistorialView({ players, matches, me, showToast }) {
     showToast("Resultado corregido. Ahora el otro equipo tiene que confirmarlo.");
   };
 
+  const removeMatch = async (match) => {
+    if (!window.confirm("¿Borrar este partido? Esto afecta el ranking y no se puede deshacer.")) return;
+    await deleteMatch(match.id);
+    showToast("Partido borrado.");
+  };
+
   const clearHistory = async () => {
     if (!window.confirm("¿Borrar TODO el historial de partidos? Esto afecta el ranking y no se puede deshacer.")) return;
     await deleteAllMatches();
@@ -844,7 +888,7 @@ function HistorialView({ players, matches, me, showToast }) {
             </div>
             <div className="space-y-3">
               {g.items.map((m) => (
-                <MatchCard key={m.id} match={m} nameOf={nameOf} me={me} onConfirm={confirm} onReject={reject} />
+                <MatchCard key={m.id} match={m} nameOf={nameOf} me={me} onConfirm={confirm} onReject={reject} onDelete={removeMatch} />
               ))}
             </div>
           </div>
