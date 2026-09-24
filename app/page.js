@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {
@@ -110,6 +110,34 @@ export default function PadelApp() {
       u3();
       u4();
     };
+  }, [authReady]);
+
+  // Auto-confirmación: partidos pendientes hace más de 15 minutos se
+  // confirman solos. Se revisa cada vez que alguien tiene la app abierta.
+  const matchesRef = useRef(matches);
+  useEffect(() => {
+    matchesRef.current = matches;
+  }, [matches]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    const AUTO_CONFIRM_MS = 15 * 60 * 1000;
+    const checkAutoConfirm = () => {
+      const now = Date.now();
+      matchesRef.current.forEach((m) => {
+        const since = m.lastSubmittedAt || m.createdAt;
+        if (m.status === "pendiente" && since && now - since >= AUTO_CONFIRM_MS) {
+          updateMatch(m.id, {
+            status: "confirmado",
+            confirmedBy: Array.from(new Set([...m.teamA, ...m.teamB])),
+            autoConfirmed: true,
+          }).catch((e) => console.error("auto-confirm error", e));
+        }
+      });
+    };
+    checkAutoConfirm();
+    const interval = setInterval(checkAutoConfirm, 60 * 1000);
+    return () => clearInterval(interval);
   }, [authReady]);
 
   const showToast = useCallback((msg) => {
@@ -495,13 +523,15 @@ function ChangePinModal({ me, players, onClose, showToast }) {
 }
 
 function RankingView({ players, matches, tournament, me, showToast }) {
-  const [editingDate, setEditingDate] = useState(tournament?.startDate || todayISO());
+  const [editingStart, setEditingStart] = useState(tournament?.startDate || todayISO());
+  const [editingEnd, setEditingEnd] = useState(tournament?.endDate || todayISO());
 
   useEffect(() => {
-    if (tournament?.startDate) setEditingDate(tournament.startDate);
-  }, [tournament?.startDate]);
+    if (tournament?.startDate) setEditingStart(tournament.startDate);
+    if (tournament?.endDate) setEditingEnd(tournament.endDate);
+  }, [tournament?.startDate, tournament?.endDate]);
 
-  const endDate = tournament ? addMonths(tournament.startDate, 2) : null;
+  const endDate = tournament?.endDate || null;
   const today = todayISO();
   const status = !tournament ? "none" : today < tournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
 
@@ -516,15 +546,19 @@ function RankingView({ players, matches, tournament, me, showToast }) {
     statsById[p.id] = { played: 0, wins: 0 };
   });
   confirmedInWindow.forEach((m) => {
+    const loserScore = Math.min(m.scoreA, m.scoreB);
+    const loserPts = loserScore >= 2 ? 1 : 0;
+    const teamAPts = m.winnerTeam === "A" ? 3 : loserPts;
+    const teamBPts = m.winnerTeam === "B" ? 3 : loserPts;
     m.teamA.forEach((id) => {
-      pointsById[id] = (pointsById[id] || 0) + m.scoreA;
+      pointsById[id] = (pointsById[id] || 0) + teamAPts;
       if (statsById[id]) {
         statsById[id].played += 1;
         if (m.winnerTeam === "A") statsById[id].wins += 1;
       }
     });
     m.teamB.forEach((id) => {
-      pointsById[id] = (pointsById[id] || 0) + m.scoreB;
+      pointsById[id] = (pointsById[id] || 0) + teamBPts;
       if (statsById[id]) {
         statsById[id].played += 1;
         if (m.winnerTeam === "B") statsById[id].wins += 1;
@@ -533,10 +567,12 @@ function RankingView({ players, matches, tournament, me, showToast }) {
   });
 
   const ranked = [...players].filter((p) => !p.isGuest).sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
+  const champion = status === "finished" && ranked.length > 0 && (pointsById[ranked[0].id] || 0) > 0 ? ranked[0] : null;
 
   const saveTournament = async () => {
-    if (!editingDate) return;
-    await setTournament({ startDate: editingDate });
+    if (!editingStart || !editingEnd) return;
+    if (editingEnd < editingStart) return showToast("La fecha de fin no puede ser antes que la de inicio.");
+    await setTournament({ startDate: editingStart, endDate: editingEnd });
     showToast("Torneo configurado.");
   };
 
@@ -559,14 +595,33 @@ function RankingView({ players, matches, tournament, me, showToast }) {
         <div className="text-xs text-black/40 mb-4">Todavía no hay un torneo configurado.</div>
       )}
 
+      {champion && (
+        <div className="mb-4 rounded-2xl p-5 text-center relative overflow-hidden" style={{ background: COLORS.courtDeep }}>
+          <span className="absolute" style={{ top: 10, left: 18, width: 6, height: 6, borderRadius: 999, background: COLORS.lime, opacity: 0.7 }} />
+          <span className="absolute" style={{ top: 22, right: 26, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.5 }} />
+          <span className="absolute" style={{ bottom: 14, left: 30, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.4 }} />
+          <span className="absolute" style={{ bottom: 20, right: 18, width: 7, height: 7, borderRadius: 999, background: COLORS.lime, opacity: 0.6 }} />
+          <Trophy size={30} style={{ color: COLORS.lime, margin: "0 auto 8px" }} />
+          <div className="text-[10px] font-semibold tracking-widest" style={{ color: "rgba(255,255,255,0.55)" }}>TORNEO FINALIZADO</div>
+          <div className="font-display text-3xl mt-1" style={{ color: COLORS.lime }}>{champion.name}</div>
+          <div className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.75)" }}>🏆 Campeón con {pointsById[champion.id]} puntos</div>
+        </div>
+      )}
+
       {me?.isAdmin && (
         <div className="bg-white rounded-xl p-3.5 shadow-sm border mb-4" style={{ borderColor: "#eee" }}>
           <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Configurar torneo (admin)</div>
-          <div className="flex gap-2">
-            <input type="date" value={editingDate} onChange={(e) => setEditingDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm flex-1" />
-            <button onClick={saveTournament} className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>Guardar</button>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-[10px] text-black/40 mb-1">Inicio</div>
+              <input type="date" value={editingStart} onChange={(e) => setEditingStart(e.target.value)} className="border rounded-lg px-3 py-2 text-sm w-full" />
+            </div>
+            <div>
+              <div className="text-[10px] text-black/40 mb-1">Fin</div>
+              <input type="date" value={editingEnd} onChange={(e) => setEditingEnd(e.target.value)} className="border rounded-lg px-3 py-2 text-sm w-full" />
+            </div>
           </div>
-          <div className="text-[11px] text-black/40 mt-1.5">Dura 2 meses desde la fecha de inicio.</div>
+          <button onClick={saveTournament} className="w-full mt-2 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>Guardar</button>
         </div>
       )}
 
@@ -678,6 +733,7 @@ function NuevoPartidoView({ players, me, matches, showToast, goRanking }) {
         confirmedBy: [me.id],
         status: "pendiente",
         createdAt: Date.now(),
+        lastSubmittedAt: Date.now(),
       });
       showToast("Partido cargado. Falta la confirmación del rival.");
       goRanking();
@@ -764,7 +820,7 @@ function MatchCard({ match: m, nameOf, me, onConfirm, onReject, onDelete }) {
             <Trash2 size={11} /> Borrar
           </button>
         ) : <span />}
-        <StatusPill status={m.status} />
+        <StatusPill status={m.status} auto={m.autoConfirmed} />
       </div>
       <div className="flex items-center justify-between mb-1.5">
         <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
@@ -805,7 +861,7 @@ function MatchCard({ match: m, nameOf, me, onConfirm, onReject, onDelete }) {
         </div>
       )}
       {!editing && m.status === "pendiente" && !canAct && (
-        <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival</div>
+        <div className="mt-3 text-[11px] text-center text-black/40">Esperando confirmación del rival (se confirma sola a los 15 min)</div>
       )}
     </div>
   );
@@ -836,6 +892,8 @@ function HistorialView({ players, matches, me, showToast }) {
       submittedBy: me.id,
       confirmedBy: [me.id],
       status: "pendiente",
+      lastSubmittedAt: Date.now(),
+      autoConfirmed: false,
     });
     showToast("Resultado corregido. Ahora el otro equipo tiene que confirmarlo.");
   };
@@ -907,11 +965,12 @@ function TeamNames({ names, bold, align = "left" }) {
   );
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, auto }) {
   const confirmed = status === "confirmado";
+  const label = confirmed ? (auto ? "Confirmado automáticamente" : "Confirmado") : "Pendiente";
   return (
     <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: confirmed ? "rgba(212,255,63,0.25)" : "rgba(226,87,43,0.12)", color: confirmed ? "#4d6b00" : COLORS.clay }}>
-      {confirmed ? "Confirmado" : "Pendiente"}
+      {label}
     </span>
   );
 }
