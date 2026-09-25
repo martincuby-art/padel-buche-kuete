@@ -234,7 +234,12 @@ function Header({ me, onLogout, onSettings, onIngresar }) {
       <div className="absolute left-1/2 top-2 bottom-2 w-px opacity-30" style={{ background: COLORS.lime }} />
       <div className="relative flex items-start justify-between max-w-md mx-auto">
         <div>
-          <div className="font-display text-4xl leading-none" style={{ color: COLORS.lime }}>APPadel</div>
+          <div className="flex items-center gap-1.5">
+            <div className="font-display text-4xl leading-none" style={{ color: COLORS.lime }}>APPadel</div>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full mt-1" style={{ background: "rgba(212,255,63,0.2)", color: COLORS.lime }}>
+              v2.0
+            </span>
+          </div>
           <div className="font-display text-2xl leading-none text-white/90">Buche Kuete</div>
         </div>
         {me ? (
@@ -296,7 +301,12 @@ function AuthScreen({ players, onLogin, onClose, showToast }) {
           <X size={22} />
         </button>
       )}
-      <div className="font-display text-5xl text-center leading-none mb-1" style={{ color: COLORS.lime }}>APPadel</div>
+      <div className="flex items-center gap-1.5">
+        <div className="font-display text-5xl text-center leading-none mb-1" style={{ color: COLORS.lime }}>APPadel</div>
+        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: "rgba(212,255,63,0.2)", color: COLORS.lime }}>
+          v2.0
+        </span>
+      </div>
       <div className="font-display text-2xl text-white/90 mb-8">Buche Kuete</div>
 
       <div className="w-full max-w-xs bg-white/5 border border-white/10 rounded-2xl p-5">
@@ -649,8 +659,17 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
         <div className="text-xs text-black/40 mb-4">No hay un torneo activo en este momento.</div>
       )}
 
-      {!activeTournament && lastClosed && (
+      {lastClosed && !lastClosed.bannerHidden && (
         <div className="mb-4 rounded-2xl p-5 text-center relative overflow-hidden" style={{ background: COLORS.courtDeep }}>
+          {me?.isAdmin && (
+            <button
+              onClick={() => updateTournament(lastClosed.id, { bannerHidden: true })}
+              className="absolute top-2.5 right-2.5 text-[10px] font-semibold px-2 py-1 rounded-full"
+              style={{ background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)" }}
+            >
+              Ocultar
+            </button>
+          )}
           <span className="absolute" style={{ top: 10, left: 18, width: 6, height: 6, borderRadius: 999, background: COLORS.lime, opacity: 0.7 }} />
           <span className="absolute" style={{ top: 22, right: 26, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.5 }} />
           <span className="absolute" style={{ bottom: 14, left: 30, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.4 }} />
@@ -1046,6 +1065,16 @@ function groupMatchesByTournament(matches, tournaments) {
 function HistorialView({ players, matches, tournaments, me, showToast }) {
   const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
   const [expandedKeys, setExpandedKeys] = useState(new Set());
+  const autoExpandedRef = useRef(false);
+
+  useEffect(() => {
+    if (autoExpandedRef.current) return;
+    const active = tournaments.find((t) => t.status === "activo");
+    if (active) {
+      setExpandedKeys((prev) => new Set(prev).add(active.id));
+      autoExpandedRef.current = true;
+    }
+  }, [tournaments]);
 
   const toggleGroup = (key) => {
     setExpandedKeys((prev) => {
