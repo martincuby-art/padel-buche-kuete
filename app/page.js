@@ -33,6 +33,8 @@ import {
   Bell,
   Shield,
   Trash2,
+  UserCheck,
+  UserX,
   Share2,
   Ban,
   ThumbsUp,
@@ -420,6 +422,12 @@ function ChangePinModal({ me, players, onClose, showToast }) {
     showToast(p.isAdmin ? `${p.name} ya no es admin.` : `${p.name} ahora es admin.`);
   };
 
+  const toggleActive = async (p) => {
+    const isCurrentlyActive = p.active !== false;
+    await updatePlayer(p.id, { active: !isCurrentlyActive });
+    showToast(isCurrentlyActive ? `${p.name} marcado como inactivo.` : `${p.name} marcado como activo.`);
+  };
+
   const removePlayer = async (p) => {
     if (p.id === me.id) {
       showToast("No te podés eliminar a vos mismo.");
@@ -493,41 +501,59 @@ function ChangePinModal({ me, players, onClose, showToast }) {
             <div className="mt-5 pt-4 border-t" style={{ borderColor: "#eee" }}>
               <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Gestionar jugadores (admin)</div>
               <div className="space-y-2">
-                {players.map((p) => (
-                  <div key={p.id} className="flex items-center gap-2 bg-black/[0.03] rounded-lg px-2.5 py-2">
-                    <div className="flex-1 text-sm font-medium" style={{ color: COLORS.ink }}>
-                      {p.name} {p.id === me.id && <span className="text-[10px] text-black/40">(vos)</span>}
-                    </div>
-                    {p.isGuest && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(14,75,68,0.1)", color: COLORS.courtDeep }}>
-                        INVITADO
-                      </span>
-                    )}
-                    {p.isAdmin && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,255,63,0.3)", color: "#4d6b00" }}>
-                        ADMIN
-                      </span>
-                    )}
-                    {!p.isGuest && (
+                {players.map((p) => {
+                  const isActive = p.active !== false;
+                  return (
+                    <div key={p.id} className="flex items-center gap-2 bg-black/[0.03] rounded-lg px-2.5 py-2">
+                      <div className="flex-1 text-sm font-medium" style={{ color: isActive ? COLORS.ink : "#999" }}>
+                        {p.name} {p.id === me.id && <span className="text-[10px] text-black/40">(vos)</span>}
+                      </div>
+                      {p.isGuest && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(14,75,68,0.1)", color: COLORS.courtDeep }}>
+                          INVITADO
+                        </span>
+                      )}
+                      {!isActive && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(226,87,43,0.12)", color: COLORS.clay }}>
+                          INACTIVO
+                        </span>
+                      )}
+                      {p.isAdmin && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,255,63,0.3)", color: "#4d6b00" }}>
+                          ADMIN
+                        </span>
+                      )}
+                      {!p.isGuest && (
+                        <button
+                          onClick={() => toggleActive(p)}
+                          title={isActive ? "Marcar inactivo" : "Marcar activo"}
+                          className="p-1.5 rounded-md hover:bg-black/5"
+                          style={{ color: isActive ? "#999" : "#4d6b00" }}
+                        >
+                          {isActive ? <UserX size={14} /> : <UserCheck size={14} />}
+                        </button>
+                      )}
+                      {!p.isGuest && (
+                        <button
+                          onClick={() => toggleAdmin(p)}
+                          title={p.isAdmin ? "Quitar admin" : "Hacer admin"}
+                          className="p-1.5 rounded-md hover:bg-black/5"
+                          style={{ color: COLORS.courtDeep }}
+                        >
+                          <Shield size={14} />
+                        </button>
+                      )}
                       <button
-                        onClick={() => toggleAdmin(p)}
-                        title={p.isAdmin ? "Quitar admin" : "Hacer admin"}
+                        onClick={() => removePlayer(p)}
+                        title="Eliminar jugador"
                         className="p-1.5 rounded-md hover:bg-black/5"
-                        style={{ color: COLORS.courtDeep }}
+                        style={{ color: COLORS.clay }}
                       >
-                        <Shield size={14} />
+                        <Trash2 size={14} />
                       </button>
-                    )}
-                    <button
-                      onClick={() => removePlayer(p)}
-                      title="Eliminar jugador"
-                      className="p-1.5 rounded-md hover:bg-black/5"
-                      style={{ color: COLORS.clay }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </>
@@ -537,7 +563,7 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   );
 }
 
-function computeStandings(players, matches, startDate, endDate) {
+function computeStandings(players, matches, startDate, endDate, respectActive = false) {
   const confirmedInWindow = matches.filter((m) => m.status === "confirmado" && m.date >= startDate && m.date <= endDate);
 
   const pointsById = {};
@@ -567,7 +593,10 @@ function computeStandings(players, matches, startDate, endDate) {
     });
   });
 
-  const ranked = [...players].filter((p) => !p.isGuest).sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
+  const ranked = [...players]
+    .filter((p) => !p.isGuest)
+    .filter((p) => !respectActive || p.active !== false)
+    .sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
 
   return { ranked, pointsById, statsById, confirmedCount: confirmedInWindow.length };
 }
@@ -600,7 +629,7 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
     : [];
 
   const { ranked, pointsById, statsById, confirmedCount } = activeTournament
-    ? computeStandings(players, matches, activeTournament.startDate, activeTournament.endDate)
+    ? computeStandings(players, matches, activeTournament.startDate, activeTournament.endDate, true)
     : { ranked: [], pointsById: {}, statsById: {}, confirmedCount: 0 };
 
   const saveTournament = async () => {
@@ -863,7 +892,10 @@ function NuevoPartidoView({ players, me, matches, showToast, goRanking }) {
   const [busy, setBusy] = useState(false);
 
   const ids = [me.id, teamA2, teamB1, teamB2];
-  const options = (excludeSelf) => players.filter((p) => !ids.filter((x) => x !== excludeSelf).includes(p.id) || p.id === excludeSelf);
+  const options = (excludeSelf) =>
+    players
+      .filter((p) => p.active !== false || p.id === excludeSelf)
+      .filter((p) => !ids.filter((x) => x !== excludeSelf).includes(p.id) || p.id === excludeSelf);
 
   const submit = async () => {
     setError("");
