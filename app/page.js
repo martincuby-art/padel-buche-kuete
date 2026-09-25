@@ -38,6 +38,7 @@ import {
   ThumbsUp,
   ThumbsDown,
   Eye,
+  ChevronRight,
 } from "lucide-react";
 
 const COLORS = {
@@ -526,35 +527,8 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   );
 }
 
-function RankingView({ players, matches, tournaments, me, showToast }) {
-  const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
-  const activeTournament = tournaments.find((t) => t.status === "activo") || null;
-  const pastTournaments = tournaments.filter((t) => t.status === "cerrado").sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
-  const lastClosed = pastTournaments[0] || null;
-
-  const [editingName, setEditingName] = useState(activeTournament?.name || "");
-  const [editingStart, setEditingStart] = useState(activeTournament?.startDate || todayISO());
-  const [editingEnd, setEditingEnd] = useState(activeTournament?.endDate || todayISO());
-
-  useEffect(() => {
-    setEditingName(activeTournament?.name || "");
-    setEditingStart(activeTournament?.startDate || todayISO());
-    setEditingEnd(activeTournament?.endDate || todayISO());
-  }, [activeTournament?.id]);
-
-  const endDate = activeTournament?.endDate || null;
-  const today = todayISO();
-  const status = !activeTournament ? "none" : today < activeTournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
-
-  const confirmedInWindow = activeTournament
-    ? matches.filter((m) => m.status === "confirmado" && m.date >= activeTournament.startDate && m.date <= endDate)
-    : [];
-
-  const matchesInWindow = activeTournament
-    ? [...matches]
-        .filter((m) => m.date >= activeTournament.startDate && m.date <= endDate)
-        .sort((a, b) => b.createdAt - a.createdAt)
-    : [];
+function computeStandings(players, matches, startDate, endDate) {
+  const confirmedInWindow = matches.filter((m) => m.status === "confirmado" && m.date >= startDate && m.date <= endDate);
 
   const pointsById = {};
   const statsById = {};
@@ -584,6 +558,40 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
   });
 
   const ranked = [...players].filter((p) => !p.isGuest).sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
+
+  return { ranked, pointsById, statsById, confirmedCount: confirmedInWindow.length };
+}
+
+function RankingView({ players, matches, tournaments, me, showToast }) {
+  const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
+  const activeTournament = tournaments.find((t) => t.status === "activo") || null;
+  const pastTournaments = tournaments.filter((t) => t.status === "cerrado").sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
+  const lastClosed = pastTournaments[0] || null;
+  const [expandedPastId, setExpandedPastId] = useState(null);
+
+  const [editingName, setEditingName] = useState(activeTournament?.name || "");
+  const [editingStart, setEditingStart] = useState(activeTournament?.startDate || todayISO());
+  const [editingEnd, setEditingEnd] = useState(activeTournament?.endDate || todayISO());
+
+  useEffect(() => {
+    setEditingName(activeTournament?.name || "");
+    setEditingStart(activeTournament?.startDate || todayISO());
+    setEditingEnd(activeTournament?.endDate || todayISO());
+  }, [activeTournament?.id]);
+
+  const endDate = activeTournament?.endDate || null;
+  const today = todayISO();
+  const status = !activeTournament ? "none" : today < activeTournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
+
+  const matchesInWindow = activeTournament
+    ? [...matches]
+        .filter((m) => m.date >= activeTournament.startDate && m.date <= endDate)
+        .sort((a, b) => b.createdAt - a.createdAt)
+    : [];
+
+  const { ranked, pointsById, statsById, confirmedCount } = activeTournament
+    ? computeStandings(players, matches, activeTournament.startDate, activeTournament.endDate)
+    : { ranked: [], pointsById: {}, statsById: {}, confirmedCount: 0 };
 
   const saveTournament = async () => {
     if (!editingName.trim()) return showToast("Poné un nombre para el torneo.");
@@ -627,7 +635,7 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
       <div className="flex items-center gap-2 mb-1">
         <Trophy size={18} style={{ color: COLORS.courtDeep }} />
         <h2 className="font-display text-2xl" style={{ color: COLORS.ink }}>RANKING</h2>
-        {activeTournament && <span className="text-xs text-black/40 ml-auto">{confirmedInWindow.length} partidos jugados</span>}
+        {activeTournament && <span className="text-xs text-black/40 ml-auto">{confirmedCount} partidos jugados</span>}
       </div>
 
       {activeTournament ? (
@@ -742,18 +750,57 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
         <div className="mt-7">
           <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>HISTORIAL DE TORNEOS</div>
           <div className="space-y-2">
-            {pastTournaments.map((t) => (
-              <div key={t.id} className="bg-white rounded-xl px-3.5 py-3 shadow-sm border flex items-center justify-between gap-2" style={{ borderColor: "#eee" }}>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: COLORS.ink }}>{t.name}</div>
-                  <div className="text-[11px] text-black/40">{fmtDate(t.startDate)} — {fmtDate(t.endDate)}</div>
+            {pastTournaments.map((t) => {
+              const isOpen = expandedPastId === t.id;
+              const pastStandings = isOpen ? computeStandings(players, matches, t.startDate, t.endDate) : null;
+              return (
+                <div key={t.id} className="bg-white rounded-xl shadow-sm border overflow-hidden" style={{ borderColor: "#eee" }}>
+                  <button
+                    onClick={() => setExpandedPastId(isOpen ? null : t.id)}
+                    className="w-full px-3.5 py-3 flex items-center justify-between gap-2 text-left"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate" style={{ color: COLORS.ink }}>{t.name}</div>
+                      <div className="text-[11px] text-black/40">{fmtDate(t.startDate)} — {fmtDate(t.endDate)}</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right">
+                        <div className="text-xs font-semibold flex items-center gap-1 justify-end" style={{ color: COLORS.courtDeep }}>🏆 {t.championName}</div>
+                        <div className="text-[10px] text-black/40">{t.championPoints} pts</div>
+                      </div>
+                      <ChevronRight size={14} className="text-black/30" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                    </div>
+                  </button>
+
+                  {isOpen && pastStandings && (
+                    <div className="px-3.5 pb-3.5 pt-1 border-t" style={{ borderColor: "#f3f3f3" }}>
+                      <div className="flex items-center gap-2 mb-1.5 mt-2 text-[10px] font-semibold text-black/35">
+                        <div className="w-6 shrink-0" />
+                        <div className="flex-1">JUGADOR</div>
+                        <div className="w-8 text-center shrink-0">PJ</div>
+                        <div className="w-12 text-center shrink-0">EFEC%</div>
+                        <div className="w-9 text-right shrink-0">PTS</div>
+                      </div>
+                      <div className="space-y-1.5">
+                        {pastStandings.ranked.map((p, i) => {
+                          const st = pastStandings.statsById[p.id] || { played: 0, wins: 0 };
+                          const pct = st.played > 0 ? Math.round((st.wins / st.played) * 100) : 0;
+                          return (
+                            <div key={p.id} className="flex items-center gap-2 py-1">
+                              <div className="w-6 text-center text-[11px] font-semibold shrink-0" style={{ color: i === 0 ? "#4d6b00" : "#999" }}>{i + 1}</div>
+                              <div className="flex-1 text-xs font-medium truncate" style={{ color: COLORS.ink }}>{p.name}</div>
+                              <div className="w-8 text-center text-[11px] text-black/45 shrink-0">{st.played}</div>
+                              <div className="w-12 text-center text-[11px] text-black/45 shrink-0">{pct}%</div>
+                              <div className="w-9 text-right text-xs font-semibold shrink-0" style={{ color: COLORS.courtDeep }}>{pastStandings.pointsById[p.id] || 0}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="text-right shrink-0">
-                  <div className="text-xs font-semibold flex items-center gap-1 justify-end" style={{ color: COLORS.courtDeep }}>🏆 {t.championName}</div>
-                  <div className="text-[10px] text-black/40">{t.championPoints} pts</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
