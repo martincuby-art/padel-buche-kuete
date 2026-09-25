@@ -217,7 +217,7 @@ export default function PadelApp() {
             <GuestLocked onIngresar={() => setShowAuth(true)} />
           )
         )}
-        {tab === "historial" && <HistorialView players={players} matches={matches} me={me} showToast={showToast} />}
+        {tab === "historial" && <HistorialView players={players} matches={matches} tournaments={tournaments} me={me} showToast={showToast} />}
         {tab === "noticias" && (
           <NoticiasView news={news} me={me} showToast={showToast} onOpen={() => openTab("noticias")} highlightId={highlightNewsId} />
         )}
@@ -1016,8 +1016,45 @@ function MatchCard({ match: m, nameOf, me, onConfirm, onReject, onDelete }) {
   );
 }
 
-function HistorialView({ players, matches, me, showToast }) {
+function groupMatchesByTournament(matches, tournaments) {
+  const sortedTournaments = [...tournaments].sort((a, b) => {
+    if (a.status === "activo" && b.status !== "activo") return -1;
+    if (b.status === "activo" && a.status !== "activo") return 1;
+    return (b.closedAt || b.createdAt || 0) - (a.closedAt || a.createdAt || 0);
+  });
+
+  const groups = sortedTournaments.map((t) => ({ key: t.id, tournament: t, matches: [] }));
+  const noTournament = { key: "none", tournament: null, matches: [] };
+
+  matches.forEach((m) => {
+    const t = sortedTournaments.find((t) => m.date >= t.startDate && m.date <= t.endDate);
+    if (t) {
+      groups.find((g) => g.key === t.id).matches.push(m);
+    } else {
+      noTournament.matches.push(m);
+    }
+  });
+
+  groups.forEach((g) => g.matches.sort((a, b) => b.createdAt - a.createdAt));
+  noTournament.matches.sort((a, b) => b.createdAt - a.createdAt);
+
+  const nonEmpty = groups.filter((g) => g.matches.length > 0);
+  if (noTournament.matches.length > 0) nonEmpty.push(noTournament);
+  return nonEmpty;
+}
+
+function HistorialView({ players, matches, tournaments, me, showToast }) {
   const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
+  const [expandedKeys, setExpandedKeys] = useState(new Set());
+
+  const toggleGroup = (key) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const confirm = async (match) => {
     const opponentTeam = match.submittedBy === match.teamA[0] || match.submittedBy === match.teamA[1] ? match.teamB : match.teamA;
@@ -1059,17 +1096,7 @@ function HistorialView({ players, matches, me, showToast }) {
     showToast("Historial borrado.");
   };
 
-  const sorted = [...matches].sort((a, b) => b.createdAt - a.createdAt);
-  const groups = [];
-  sorted.forEach((m) => {
-    let g = groups.find((g) => g.date === m.date);
-    if (!g) {
-      g = { date: m.date, items: [] };
-      groups.push(g);
-    }
-    g.items.push(m);
-  });
-  groups.sort((a, b) => (a.date < b.date ? 1 : -1));
+  const tournamentGroups = groupMatchesByTournament(matches, tournaments);
 
   return (
     <div className="pt-5">
@@ -1085,21 +1112,63 @@ function HistorialView({ players, matches, me, showToast }) {
         )}
       </div>
 
-      {sorted.length === 0 && <EmptyState text="Todavía no se cargó ningún partido." />}
+      {matches.length === 0 && <EmptyState text="Todavía no se cargó ningún partido." />}
 
-      <div className="space-y-5">
-        {groups.map((g) => (
-          <div key={g.date}>
-            <div className="text-xs font-semibold mb-2 sticky top-0 py-1" style={{ color: COLORS.courtDeep }}>
-              {fmtDate(g.date)}
+      <div className="space-y-3">
+        {tournamentGroups.map((g) => {
+          const isOpen = expandedKeys.has(g.key);
+          const label = g.tournament ? g.tournament.name : "Sin torneo asignado";
+          const dateRange = g.tournament ? `${fmtDate(g.tournament.startDate)} — ${fmtDate(g.tournament.endDate)}` : null;
+          const isActive = g.tournament?.status === "activo";
+
+          const dateGroups = [];
+          g.matches.forEach((m) => {
+            let dg = dateGroups.find((d) => d.date === m.date);
+            if (!dg) {
+              dg = { date: m.date, items: [] };
+              dateGroups.push(dg);
+            }
+            dg.items.push(m);
+          });
+          dateGroups.sort((a, b) => (a.date < b.date ? 1 : -1));
+
+          return (
+            <div key={g.key} className="bg-white rounded-xl shadow-sm border overflow-hidden" style={{ borderColor: "#eee" }}>
+              <button onClick={() => toggleGroup(g.key)} className="w-full px-4 py-3.5 flex items-center justify-between gap-2 text-left">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate flex items-center gap-1.5" style={{ color: COLORS.ink }}>
+                    {label}
+                    {isActive && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,255,63,0.35)", color: "#4d6b00" }}>
+                        ACTIVO
+                      </span>
+                    )}
+                  </div>
+                  {dateRange && <div className="text-[11px] text-black/40">{dateRange}</div>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] text-black/40">{g.matches.length} partido{g.matches.length === 1 ? "" : "s"}</span>
+                  <ChevronRight size={14} className="text-black/30" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                </div>
+              </button>
+
+              {isOpen && (
+                <div className="px-4 pb-4 pt-1 border-t space-y-4" style={{ borderColor: "#f3f3f3" }}>
+                  {dateGroups.map((dg) => (
+                    <div key={dg.date} className="pt-3">
+                      <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>{fmtDate(dg.date)}</div>
+                      <div className="space-y-3">
+                        {dg.items.map((m) => (
+                          <MatchCard key={m.id} match={m} nameOf={nameOf} me={me} onConfirm={confirm} onReject={reject} onDelete={removeMatch} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="space-y-3">
-              {g.items.map((m) => (
-                <MatchCard key={m.id} match={m} nameOf={nameOf} me={me} onConfirm={confirm} onReject={reject} onDelete={removeMatch} />
-              ))}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
