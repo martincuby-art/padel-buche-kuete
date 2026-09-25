@@ -6,13 +6,14 @@ import { auth } from "../lib/firebase";
 import {
   subscribePlayers,
   subscribeMatches,
-  subscribeTournament,
+  subscribeTournaments,
   subscribeNews,
   addPlayer,
   updatePlayer,
   addMatch,
   updateMatch,
-  setTournament,
+  addTournament,
+  updateTournament,
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
@@ -67,7 +68,7 @@ export default function PadelApp() {
   const [authReady, setAuthReady] = useState(false);
   const [players, setPlayers] = useState([]);
   const [matches, setMatches] = useState([]);
-  const [tournament, setTournamentState] = useState(null);
+  const [tournaments, setTournaments] = useState([]);
   const [news, setNews] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [tab, setTab] = useState("ranking");
@@ -102,7 +103,7 @@ export default function PadelApp() {
     if (!authReady) return;
     const u1 = subscribePlayers(setPlayers);
     const u2 = subscribeMatches(setMatches);
-    const u3 = subscribeTournament(setTournamentState);
+    const u3 = subscribeTournaments(setTournaments);
     const u4 = subscribeNews(setNews);
     return () => {
       u1();
@@ -203,7 +204,7 @@ export default function PadelApp() {
       )}
       <div className="max-w-md mx-auto px-4">
         {tab === "ranking" && (
-          <RankingView players={players} matches={matches} tournament={tournament} me={me} showToast={showToast} />
+          <RankingView players={players} matches={matches} tournaments={tournaments} me={me} showToast={showToast} />
         )}
         {tab === "nuevo" && (
           me ? (
@@ -522,21 +523,27 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   );
 }
 
-function RankingView({ players, matches, tournament, me, showToast }) {
-  const [editingStart, setEditingStart] = useState(tournament?.startDate || todayISO());
-  const [editingEnd, setEditingEnd] = useState(tournament?.endDate || todayISO());
+function RankingView({ players, matches, tournaments, me, showToast }) {
+  const activeTournament = tournaments.find((t) => t.status === "activo") || null;
+  const pastTournaments = tournaments.filter((t) => t.status === "cerrado").sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
+  const lastClosed = pastTournaments[0] || null;
+
+  const [editingName, setEditingName] = useState(activeTournament?.name || "");
+  const [editingStart, setEditingStart] = useState(activeTournament?.startDate || todayISO());
+  const [editingEnd, setEditingEnd] = useState(activeTournament?.endDate || todayISO());
 
   useEffect(() => {
-    if (tournament?.startDate) setEditingStart(tournament.startDate);
-    if (tournament?.endDate) setEditingEnd(tournament.endDate);
-  }, [tournament?.startDate, tournament?.endDate]);
+    setEditingName(activeTournament?.name || "");
+    setEditingStart(activeTournament?.startDate || todayISO());
+    setEditingEnd(activeTournament?.endDate || todayISO());
+  }, [activeTournament?.id]);
 
-  const endDate = tournament?.endDate || null;
+  const endDate = activeTournament?.endDate || null;
   const today = todayISO();
-  const status = !tournament ? "none" : today < tournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
+  const status = !activeTournament ? "none" : today < activeTournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
 
-  const confirmedInWindow = tournament
-    ? matches.filter((m) => m.status === "confirmado" && m.date >= tournament.startDate && m.date <= endDate)
+  const confirmedInWindow = activeTournament
+    ? matches.filter((m) => m.status === "confirmado" && m.date >= activeTournament.startDate && m.date <= endDate)
     : [];
 
   const pointsById = {};
@@ -567,13 +574,42 @@ function RankingView({ players, matches, tournament, me, showToast }) {
   });
 
   const ranked = [...players].filter((p) => !p.isGuest).sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
-  const champion = status === "finished" && ranked.length > 0 && (pointsById[ranked[0].id] || 0) > 0 ? ranked[0] : null;
 
   const saveTournament = async () => {
+    if (!editingName.trim()) return showToast("Poné un nombre para el torneo.");
     if (!editingStart || !editingEnd) return;
     if (editingEnd < editingStart) return showToast("La fecha de fin no puede ser antes que la de inicio.");
-    await setTournament({ startDate: editingStart, endDate: editingEnd });
-    showToast("Torneo configurado.");
+    if (activeTournament) {
+      await updateTournament(activeTournament.id, { name: editingName.trim(), startDate: editingStart, endDate: editingEnd });
+      showToast("Torneo actualizado.");
+    } else {
+      await addTournament({
+        name: editingName.trim(),
+        startDate: editingStart,
+        endDate: editingEnd,
+        status: "activo",
+        createdAt: Date.now(),
+      });
+      showToast("Torneo creado.");
+    }
+  };
+
+  const closeTournament = async () => {
+    if (!activeTournament) return;
+    if (ranked.length === 0 || (pointsById[ranked[0].id] || 0) === 0) {
+      showToast("Todavía no hay partidos jugados para definir un campeón.");
+      return;
+    }
+    const champ = ranked[0];
+    if (!window.confirm(`¿Cerrar "${activeTournament.name}"? El campeón queda definido y no se puede reabrir.`)) return;
+    await updateTournament(activeTournament.id, {
+      status: "cerrado",
+      championId: champ.id,
+      championName: champ.name,
+      championPoints: pointsById[champ.id] || 0,
+      closedAt: Date.now(),
+    });
+    showToast(`Torneo cerrado. Campeón: ${champ.name} 🏆`);
   };
 
   return (
@@ -581,36 +617,39 @@ function RankingView({ players, matches, tournament, me, showToast }) {
       <div className="flex items-center gap-2 mb-1">
         <Trophy size={18} style={{ color: COLORS.courtDeep }} />
         <h2 className="font-display text-2xl" style={{ color: COLORS.ink }}>RANKING</h2>
-        <span className="text-xs text-black/40 ml-auto">{confirmedInWindow.length} partidos jugados</span>
+        {activeTournament && <span className="text-xs text-black/40 ml-auto">{confirmedInWindow.length} partidos jugados</span>}
       </div>
 
-      {tournament ? (
+      {activeTournament ? (
         <div className="text-xs text-black/50 mb-4">
-          Torneo {fmtDate(tournament.startDate)} — {fmtDate(endDate)}
+          <span className="font-semibold" style={{ color: COLORS.ink }}>{activeTournament.name}</span> · {fmtDate(activeTournament.startDate)} — {fmtDate(endDate)}
           {status === "upcoming" && <span className="ml-1" style={{ color: COLORS.clay }}>· todavía no arrancó</span>}
-          {status === "finished" && <span className="ml-1" style={{ color: COLORS.clay }}>· finalizado</span>}
+          {status === "finished" && <span className="ml-1" style={{ color: COLORS.clay }}>· fechas cumplidas, falta cerrarlo</span>}
           {status === "active" && <span className="ml-1" style={{ color: "#4d6b00" }}>· en curso</span>}
         </div>
       ) : (
-        <div className="text-xs text-black/40 mb-4">Todavía no hay un torneo configurado.</div>
+        <div className="text-xs text-black/40 mb-4">No hay un torneo activo en este momento.</div>
       )}
 
-      {champion && (
+      {!activeTournament && lastClosed && (
         <div className="mb-4 rounded-2xl p-5 text-center relative overflow-hidden" style={{ background: COLORS.courtDeep }}>
           <span className="absolute" style={{ top: 10, left: 18, width: 6, height: 6, borderRadius: 999, background: COLORS.lime, opacity: 0.7 }} />
           <span className="absolute" style={{ top: 22, right: 26, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.5 }} />
           <span className="absolute" style={{ bottom: 14, left: 30, width: 5, height: 5, borderRadius: 999, background: "white", opacity: 0.4 }} />
           <span className="absolute" style={{ bottom: 20, right: 18, width: 7, height: 7, borderRadius: 999, background: COLORS.lime, opacity: 0.6 }} />
           <Trophy size={30} style={{ color: COLORS.lime, margin: "0 auto 8px" }} />
-          <div className="text-[10px] font-semibold tracking-widest" style={{ color: "rgba(255,255,255,0.55)" }}>TORNEO FINALIZADO</div>
-          <div className="font-display text-3xl mt-1" style={{ color: COLORS.lime }}>{champion.name}</div>
-          <div className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.75)" }}>🏆 Campeón con {pointsById[champion.id]} puntos</div>
+          <div className="text-[10px] font-semibold tracking-widest" style={{ color: "rgba(255,255,255,0.55)" }}>{lastClosed.name.toUpperCase()}</div>
+          <div className="font-display text-3xl mt-1" style={{ color: COLORS.lime }}>{lastClosed.championName}</div>
+          <div className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.75)" }}>🏆 Campeón con {lastClosed.championPoints} puntos</div>
         </div>
       )}
 
       {me?.isAdmin && (
         <div className="bg-white rounded-xl p-3.5 shadow-sm border mb-4" style={{ borderColor: "#eee" }}>
-          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>Configurar torneo (admin)</div>
+          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>
+            {activeTournament ? "Editar torneo activo (admin)" : "Crear torneo (admin)"}
+          </div>
+          <input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Nombre del torneo (ej: Apertura 2026)" className="border rounded-lg px-3 py-2 text-sm w-full mb-2" />
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-[10px] text-black/40 mb-1">Inicio</div>
@@ -621,44 +660,74 @@ function RankingView({ players, matches, tournament, me, showToast }) {
               <input type="date" value={editingEnd} onChange={(e) => setEditingEnd(e.target.value)} className="border rounded-lg px-3 py-2 text-sm w-full" />
             </div>
           </div>
-          <button onClick={saveTournament} className="w-full mt-2 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>Guardar</button>
+          <button onClick={saveTournament} className="w-full mt-2 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>
+            {activeTournament ? "Guardar cambios" : "Crear torneo"}
+          </button>
+          {activeTournament && (
+            <button onClick={closeTournament} className="w-full mt-2 py-2 rounded-lg text-xs font-semibold border" style={{ borderColor: COLORS.clay, color: COLORS.clay }}>
+              Cerrar torneo y definir campeón
+            </button>
+          )}
         </div>
       )}
 
-      {ranked.length === 0 && <EmptyState text="Todavía no hay jugadores en la cancha." />}
+      {activeTournament && ranked.length === 0 && <EmptyState text="Todavía no hay jugadores en la cancha." />}
 
-      {ranked.length > 0 && (
-        <div className="flex items-center gap-2 px-3 mb-1.5 text-[10px] font-semibold text-black/35">
-          <div className="w-7 shrink-0" />
-          <div className="flex-1">JUGADOR</div>
-          <div className="w-8 text-center shrink-0">PJ</div>
-          <div className="w-12 text-center shrink-0">EFEC%</div>
-          <div className="w-9 text-right shrink-0">PTS</div>
-        </div>
+      {activeTournament && ranked.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 px-3 mb-1.5 text-[10px] font-semibold text-black/35">
+            <div className="w-7 shrink-0" />
+            <div className="flex-1">JUGADOR</div>
+            <div className="w-8 text-center shrink-0">PJ</div>
+            <div className="w-12 text-center shrink-0">EFEC%</div>
+            <div className="w-9 text-right shrink-0">PTS</div>
+          </div>
+
+          <div className="space-y-2">
+            {ranked.map((p, i) => {
+              const st = statsById[p.id] || { played: 0, wins: 0 };
+              const pct = st.played > 0 ? Math.round((st.wins / st.played) * 100) : 0;
+              return (
+                <div key={p.id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-3 shadow-sm border" style={{ borderColor: i === 0 ? COLORS.lime : "#eee" }}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center font-display text-sm shrink-0" style={{ background: i === 0 ? COLORS.lime : COLORS.courtDeep, color: i === 0 ? COLORS.ink : "white" }}>
+                    {i + 1}
+                  </div>
+                  <div className="flex-1 font-semibold text-sm truncate" style={{ color: COLORS.ink }}>{p.name}</div>
+                  <div className="w-8 text-center text-xs text-black/45 shrink-0">{st.played}</div>
+                  <div className="w-12 text-center text-xs text-black/45 shrink-0">{pct}%</div>
+                  <div className="text-right w-9 shrink-0">
+                    <div className="font-display text-lg leading-none" style={{ color: COLORS.courtDeep }}>{pointsById[p.id] || 0}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
-      <div className="space-y-2">
-        {ranked.map((p, i) => {
-          const st = statsById[p.id] || { played: 0, wins: 0 };
-          const pct = st.played > 0 ? Math.round((st.wins / st.played) * 100) : 0;
-          return (
-            <div key={p.id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-3 shadow-sm border" style={{ borderColor: i === 0 ? COLORS.lime : "#eee" }}>
-              <div className="w-7 h-7 rounded-full flex items-center justify-center font-display text-sm shrink-0" style={{ background: i === 0 ? COLORS.lime : COLORS.courtDeep, color: i === 0 ? COLORS.ink : "white" }}>
-                {i + 1}
+      {pastTournaments.length > 0 && (
+        <div className="mt-7">
+          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>HISTORIAL DE TORNEOS</div>
+          <div className="space-y-2">
+            {pastTournaments.map((t) => (
+              <div key={t.id} className="bg-white rounded-xl px-3.5 py-3 shadow-sm border flex items-center justify-between gap-2" style={{ borderColor: "#eee" }}>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate" style={{ color: COLORS.ink }}>{t.name}</div>
+                  <div className="text-[11px] text-black/40">{fmtDate(t.startDate)} — {fmtDate(t.endDate)}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-semibold flex items-center gap-1 justify-end" style={{ color: COLORS.courtDeep }}>🏆 {t.championName}</div>
+                  <div className="text-[10px] text-black/40">{t.championPoints} pts</div>
+                </div>
               </div>
-              <div className="flex-1 font-semibold text-sm truncate" style={{ color: COLORS.ink }}>{p.name}</div>
-              <div className="w-8 text-center text-xs text-black/45 shrink-0">{st.played}</div>
-              <div className="w-12 text-center text-xs text-black/45 shrink-0">{pct}%</div>
-              <div className="text-right w-9 shrink-0">
-                <div className="font-display text-lg leading-none" style={{ color: COLORS.courtDeep }}>{pointsById[p.id] || 0}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 function GuestLocked({ onIngresar }) {
   return (
