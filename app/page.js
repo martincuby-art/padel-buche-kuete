@@ -17,7 +17,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
-import { deletePlayer, deleteAllMatches, deleteNews, deleteMatch } from "../lib/data";
+import { deletePlayer, deleteAllMatches, deleteNews, deleteMatch, reactToNews, recordNewsView } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -35,6 +35,9 @@ import {
   Trash2,
   Share2,
   Ban,
+  ThumbsUp,
+  ThumbsDown,
+  Eye,
 } from "lucide-react";
 
 const COLORS = {
@@ -524,6 +527,7 @@ function ChangePinModal({ me, players, onClose, showToast }) {
 }
 
 function RankingView({ players, matches, tournaments, me, showToast }) {
+  const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
   const activeTournament = tournaments.find((t) => t.status === "activo") || null;
   const pastTournaments = tournaments.filter((t) => t.status === "cerrado").sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
   const lastClosed = pastTournaments[0] || null;
@@ -544,6 +548,12 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
 
   const confirmedInWindow = activeTournament
     ? matches.filter((m) => m.status === "confirmado" && m.date >= activeTournament.startDate && m.date <= endDate)
+    : [];
+
+  const matchesInWindow = activeTournament
+    ? [...matches]
+        .filter((m) => m.date >= activeTournament.startDate && m.date <= endDate)
+        .sort((a, b) => b.createdAt - a.createdAt)
     : [];
 
   const pointsById = {};
@@ -703,6 +713,29 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
             })}
           </div>
         </>
+      )}
+
+      {activeTournament && matchesInWindow.length > 0 && (
+        <div className="mt-7">
+          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>
+            PARTIDOS DEL TORNEO ({matchesInWindow.length})
+          </div>
+          <div className="space-y-2.5">
+            {matchesInWindow.map((m) => (
+              <div key={m.id} className="bg-white rounded-xl p-3.5 shadow-sm border" style={{ borderColor: "#eee" }}>
+                <div className="flex items-center justify-between text-[11px] text-black/40 mb-1.5">
+                  <span>{fmtDate(m.date)}</span>
+                  <StatusPill status={m.status} auto={m.autoConfirmed} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
+                  <div className="font-display text-base px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
+                  <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {pastTournaments.length > 0 && (
@@ -1058,12 +1091,27 @@ function NoticiasView({ news, me, showToast, highlightId }) {
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const seenRef = useRef(new Set());
+
+  const myUid = auth.currentUser?.uid;
 
   useEffect(() => {
     if (!highlightId || news.length === 0) return;
     const el = document.getElementById(`news-${highlightId}`);
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlightId, news]);
+
+  // Registrar vista una vez por noticia por sesión (evita escrituras repetidas).
+  useEffect(() => {
+    if (!myUid) return;
+    news.forEach((n) => {
+      if (seenRef.current.has(n.id)) return;
+      seenRef.current.add(n.id);
+      if (!(n.viewedBy || []).includes(myUid)) {
+        recordNewsView(n.id, myUid).catch((e) => console.error("view tracking error", e));
+      }
+    });
+  }, [news, myUid]);
 
   const publish = async () => {
     setError("");
@@ -1098,6 +1146,14 @@ function NoticiasView({ news, me, showToast, highlightId }) {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
+  const react = (n, type) => {
+    if (!myUid) return;
+    const liked = (n.likedBy || []).includes(myUid);
+    const disliked = (n.dislikedBy || []).includes(myUid);
+    if (type === "like") reactToNews(n.id, myUid, liked ? null : "like");
+    else reactToNews(n.id, myUid, disliked ? null : "dislike");
+  };
+
   return (
     <div className="pt-5">
       <div className="flex items-center gap-2 mb-4">
@@ -1122,30 +1178,45 @@ function NoticiasView({ news, me, showToast, highlightId }) {
       {news.length === 0 && <EmptyState text="Todavía no hay noticias publicadas." />}
 
       <div className="space-y-3">
-        {news.map((n) => (
-          <div
-            key={n.id}
-            id={`news-${n.id}`}
-            className="bg-white rounded-xl p-4 shadow-sm border transition-colors"
-            style={{ borderColor: n.id === highlightId ? COLORS.lime : "#eee", borderWidth: n.id === highlightId ? 2 : 1 }}
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="font-semibold text-sm" style={{ color: COLORS.ink }}>{n.title}</div>
-              <div className="text-[10px] text-black/40 shrink-0 ml-2">{fmtDate(n.date)}</div>
-            </div>
-            <div className="text-xs text-black/60 whitespace-pre-wrap leading-relaxed">{n.body}</div>
-            <div className="flex items-center gap-4 mt-3">
-              <button onClick={() => shareWhatsapp(n)} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: "#22a355" }}>
-                <Share2 size={12} /> Compartir
-              </button>
-              {me?.isAdmin && (
-                <button onClick={() => removeNews(n)} className="text-[11px] font-semibold flex items-center gap-1 ml-auto" style={{ color: COLORS.clay }}>
-                  <Trash2 size={12} /> Eliminar
+        {news.map((n) => {
+          const liked = myUid && (n.likedBy || []).includes(myUid);
+          const disliked = myUid && (n.dislikedBy || []).includes(myUid);
+          return (
+            <div
+              key={n.id}
+              id={`news-${n.id}`}
+              className="bg-white rounded-xl p-4 shadow-sm border transition-colors"
+              style={{ borderColor: n.id === highlightId ? COLORS.lime : "#eee", borderWidth: n.id === highlightId ? 2 : 1 }}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="font-semibold text-sm" style={{ color: COLORS.ink }}>{n.title}</div>
+                <div className="text-[10px] text-black/40 shrink-0 ml-2">{fmtDate(n.date)}</div>
+              </div>
+              <div className="text-xs text-black/60 whitespace-pre-wrap leading-relaxed">{n.body}</div>
+
+              <div className="flex items-center gap-1 mt-2 text-[10px] text-black/35">
+                <Eye size={11} /> {(n.viewedBy || []).length}
+              </div>
+
+              <div className="flex items-center gap-4 mt-2.5">
+                <button onClick={() => react(n, "like")} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: liked ? "#22a355" : "#999" }}>
+                  <ThumbsUp size={13} fill={liked ? "#22a355" : "none"} /> {(n.likedBy || []).length}
                 </button>
-              )}
+                <button onClick={() => react(n, "dislike")} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: disliked ? COLORS.clay : "#999" }}>
+                  <ThumbsDown size={13} fill={disliked ? COLORS.clay : "none"} /> {(n.dislikedBy || []).length}
+                </button>
+                <button onClick={() => shareWhatsapp(n)} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: "#22a355" }}>
+                  <Share2 size={12} /> Compartir
+                </button>
+                {me?.isAdmin && (
+                  <button onClick={() => removeNews(n)} className="text-[11px] font-semibold flex items-center gap-1 ml-auto" style={{ color: COLORS.clay }}>
+                    <Trash2 size={12} /> Eliminar
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
