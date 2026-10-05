@@ -563,7 +563,7 @@ function ChangePinModal({ me, players, onClose, showToast }) {
   );
 }
 
-function computeStandings(players, matches, startDate, endDate, respectActive = false) {
+function computeStandings(players, matches, startDate, endDate, respectActive = false, onlyParticipants = false) {
   const confirmedInWindow = matches.filter((m) => m.status === "confirmado" && m.date >= startDate && m.date <= endDate);
 
   const pointsById = {};
@@ -596,13 +596,13 @@ function computeStandings(players, matches, startDate, endDate, respectActive = 
   const ranked = [...players]
     .filter((p) => !p.isGuest)
     .filter((p) => !respectActive || p.active !== false)
+    .filter((p) => !onlyParticipants || (statsById[p.id]?.played || 0) > 0)
     .sort((a, b) => (pointsById[b.id] || 0) - (pointsById[a.id] || 0));
 
   return { ranked, pointsById, statsById, confirmedCount: confirmedInWindow.length };
 }
 
 function RankingView({ players, matches, tournaments, me, showToast }) {
-  const nameOf = (id) => players.find((p) => p.id === id)?.name || "?";
   const activeTournament = tournaments.find((t) => t.status === "activo") || null;
   const pastTournaments = tournaments.filter((t) => t.status === "cerrado").sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
   const lastClosed = pastTournaments[0] || null;
@@ -621,12 +621,6 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
   const endDate = activeTournament?.endDate || null;
   const today = todayISO();
   const status = !activeTournament ? "none" : today < activeTournament.startDate ? "upcoming" : today > endDate ? "finished" : "active";
-
-  const matchesInWindow = activeTournament
-    ? [...matches]
-        .filter((m) => m.date >= activeTournament.startDate && m.date <= endDate)
-        .sort((a, b) => b.createdAt - a.createdAt)
-    : [];
 
   const { ranked, pointsById, statsById, confirmedCount } = activeTournament
     ? computeStandings(players, matches, activeTournament.startDate, activeTournament.endDate, true)
@@ -771,36 +765,13 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
         </>
       )}
 
-      {activeTournament && matchesInWindow.length > 0 && (
-        <div className="mt-7">
-          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>
-            PARTIDOS DEL TORNEO ({matchesInWindow.length})
-          </div>
-          <div className="space-y-2.5">
-            {matchesInWindow.map((m) => (
-              <div key={m.id} className="bg-white rounded-xl p-3.5 shadow-sm border" style={{ borderColor: "#eee" }}>
-                <div className="flex items-center justify-between text-[11px] text-black/40 mb-1.5">
-                  <span>{fmtDate(m.date)}</span>
-                  <StatusPill status={m.status} auto={m.autoConfirmed} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <TeamNames names={[nameOf(m.teamA[0]), nameOf(m.teamA[1])]} bold={m.winnerTeam === "A"} />
-                  <div className="font-display text-base px-2" style={{ color: COLORS.courtDeep }}>{m.scoreA} – {m.scoreB}</div>
-                  <TeamNames names={[nameOf(m.teamB[0]), nameOf(m.teamB[1])]} bold={m.winnerTeam === "B"} align="right" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {pastTournaments.length > 0 && (
         <div className="mt-7">
           <div className="text-xs font-semibold mb-2" style={{ color: COLORS.courtDeep }}>HISTORIAL DE TORNEOS</div>
           <div className="space-y-2">
             {pastTournaments.map((t) => {
               const isOpen = expandedPastId === t.id;
-              const pastStandings = isOpen ? computeStandings(players, matches, t.startDate, t.endDate) : null;
+              const pastStandings = isOpen ? computeStandings(players, matches, t.startDate, t.endDate, false, true) : null;
               return (
                 <div key={t.id} className="bg-white rounded-xl shadow-sm border overflow-hidden" style={{ borderColor: "#eee" }}>
                   <button
