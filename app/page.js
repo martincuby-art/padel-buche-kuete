@@ -42,6 +42,7 @@ import {
   ThumbsDown,
   Eye,
   ChevronRight,
+  Share,
 } from "lucide-react";
 
 const COLORS = {
@@ -83,6 +84,7 @@ export default function PadelApp() {
   const [toast, setToast] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  const [installEvent, setInstallEvent] = useState(null);
   const [lastNewsRead, setLastNewsRead] = useState(0);
   const [highlightNewsId, setHighlightNewsId] = useState(null);
 
@@ -104,6 +106,25 @@ export default function PadelApp() {
     }
 
     return unsub;
+  }, []);
+
+  // Captura el evento de instalación del navegador (Chrome/Edge/Android).
+  // Se escucha acá, desde el inicio, para no perderlo mientras carga la app.
+  useEffect(() => {
+    const onBefore = (e) => {
+      e.preventDefault();
+      setInstallEvent(e);
+    };
+    const onInstalled = () => {
+      setInstallEvent(null);
+      localStorage.setItem("padel_install_dismissed", String(Date.now()));
+    };
+    window.addEventListener("beforeinstallprompt", onBefore);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBefore);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
   }, []);
 
   // Real-time subscriptions, once authenticated
@@ -229,6 +250,7 @@ export default function PadelApp() {
           <NoticiasView news={news} notices={notices} me={me} showToast={showToast} onOpen={() => openTab("noticias")} highlightId={highlightNewsId} />
         )}
       </div>
+      <InstallPrompt installEvent={installEvent} onUsed={() => setInstallEvent(null)} />
       <BottomNav tab={tab} setTab={openTab} matches={matches} me={me} news={news} lastNewsRead={lastNewsRead} />
     </div>
   );
@@ -832,6 +854,93 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
   );
 }
 
+
+function InstallPrompt({ installEvent, onUsed }) {
+  const [show, setShow] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
+
+  useEffect(() => {
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    if (standalone) return;
+
+    const last = Number(localStorage.getItem("padel_install_dismissed") || 0);
+    if (last && Date.now() - last < SNOOZE_MS) return;
+
+    const ua = window.navigator.userAgent;
+    const ios =
+      /iphone|ipad|ipod/i.test(ua) || (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+    setIsIOS(ios);
+
+    // En iPhone/iPad no existe el botón automático: mostramos las instrucciones.
+    if (ios) {
+      const t = setTimeout(() => setShow(true), 2500);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
+  // En Android/PC el aviso aparece recién cuando el navegador dice que se puede instalar.
+  useEffect(() => {
+    if (!installEvent) return;
+    const last = Number(localStorage.getItem("padel_install_dismissed") || 0);
+    if (last && Date.now() - last < SNOOZE_MS) return;
+    const t = setTimeout(() => setShow(true), 1500);
+    return () => clearTimeout(t);
+  }, [installEvent]);
+
+  const dismiss = () => {
+    localStorage.setItem("padel_install_dismissed", String(Date.now()));
+    setShow(false);
+  };
+
+  const install = async () => {
+    if (!installEvent) return;
+    installEvent.prompt();
+    await installEvent.userChoice;
+    onUsed();
+    localStorage.setItem("padel_install_dismissed", String(Date.now()));
+    setShow(false);
+  };
+
+  if (!show || (!installEvent && !isIOS)) return null;
+
+  return (
+    <div className="fixed inset-x-0 bottom-[68px] z-40 px-4">
+      <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl border p-4" style={{ borderColor: "#e5e5e5" }}>
+        <div className="flex items-start gap-3">
+          <img src="/icon-192.png" alt="" className="w-11 h-11 rounded-xl shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-sm" style={{ color: COLORS.ink }}>Instalá APPadel Buche Kuete</div>
+            {isIOS ? (
+              <div className="text-xs text-black/55 mt-0.5 leading-relaxed">
+                Tocá el botón <Share size={12} className="inline -mt-0.5" /> <b>Compartir</b> de Safari y elegí <b>"Agregar a pantalla de inicio"</b>.
+              </div>
+            ) : (
+              <div className="text-xs text-black/55 mt-0.5 leading-relaxed">
+                Agregá el acceso directo a tu pantalla para entrar más rápido, como cualquier app.
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2 mt-3">
+          {!isIOS && (
+            <button onClick={install} className="flex-1 py-2 rounded-lg text-xs font-semibold" style={{ background: COLORS.lime, color: COLORS.ink }}>
+              Instalar
+            </button>
+          )}
+          <button
+            onClick={dismiss}
+            className={`${isIOS ? "flex-1" : ""} px-4 py-2 rounded-lg text-xs font-semibold border`}
+            style={{ borderColor: "#ddd", color: "#666" }}
+          >
+            {isIOS ? "Entendido" : "Ahora no"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function isNoticeActive(n) {
   return !n.expiresAt || n.expiresAt >= todayISO();
