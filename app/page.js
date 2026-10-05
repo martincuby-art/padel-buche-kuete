@@ -8,6 +8,7 @@ import {
   subscribeMatches,
   subscribeTournaments,
   subscribeNews,
+  subscribeNotices,
   addPlayer,
   updatePlayer,
   addMatch,
@@ -17,7 +18,7 @@ import {
   addNews,
 } from "../lib/data";
 import { enablePushNotifications } from "../lib/push";
-import { deletePlayer, deleteAllMatches, deleteNews, deleteMatch, reactToNews, recordNewsView } from "../lib/data";
+import { deletePlayer, deleteAllMatches, deleteNews, deleteMatch, reactToNews, recordNewsView, addNotice, deleteNotice } from "../lib/data";
 import {
   Trophy,
   Plus,
@@ -76,6 +77,7 @@ export default function PadelApp() {
   const [matches, setMatches] = useState([]);
   const [tournaments, setTournaments] = useState([]);
   const [news, setNews] = useState([]);
+  const [notices, setNotices] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [tab, setTab] = useState("ranking");
   const [toast, setToast] = useState("");
@@ -111,11 +113,13 @@ export default function PadelApp() {
     const u2 = subscribeMatches(setMatches);
     const u3 = subscribeTournaments(setTournaments);
     const u4 = subscribeNews(setNews);
+    const u5 = subscribeNotices(setNotices);
     return () => {
       u1();
       u2();
       u3();
       u4();
+      u5();
     };
   }, [authReady]);
 
@@ -197,6 +201,7 @@ export default function PadelApp() {
   return (
     <div style={{ background: COLORS.chalk }} className="min-h-screen font-body pb-24">
       <Header me={me} onLogout={logout} onSettings={() => setShowSettings(true)} onIngresar={() => setShowAuth(true)} />
+      <NewsTicker notices={notices} />
       {showSettings && me && (
         <ChangePinModal me={me} players={players} onClose={() => setShowSettings(false)} showToast={showToast} />
       )}
@@ -221,7 +226,7 @@ export default function PadelApp() {
         )}
         {tab === "historial" && <HistorialView players={players} matches={matches} tournaments={tournaments} me={me} showToast={showToast} />}
         {tab === "noticias" && (
-          <NoticiasView news={news} me={me} showToast={showToast} onOpen={() => openTab("noticias")} highlightId={highlightNewsId} />
+          <NoticiasView news={news} notices={notices} me={me} showToast={showToast} onOpen={() => openTab("noticias")} highlightId={highlightNewsId} />
         )}
       </div>
       <BottomNav tab={tab} setTab={openTab} matches={matches} me={me} news={news} lastNewsRead={lastNewsRead} />
@@ -828,6 +833,51 @@ function RankingView({ players, matches, tournaments, me, showToast }) {
 }
 
 
+function isNoticeActive(n) {
+  return !n.expiresAt || n.expiresAt >= todayISO();
+}
+
+function NewsTicker({ notices }) {
+  const items = [...notices].filter(isNoticeActive).sort((a, b) => b.createdAt - a.createdAt).slice(0, 10);
+  if (items.length === 0) return null;
+
+  const totalChars = items.reduce((sum, n) => sum + n.text.length, 0);
+  const duration = Math.max(18, Math.round((totalChars * 7) / 50));
+
+  const copy = (key) => (
+    <div key={key} className="inline-flex items-center shrink-0" style={{ minWidth: "100vw" }}>
+      {items.map((n) => (
+        <span key={n.id} className="inline-flex items-center">
+          <span className="font-bold" style={{ color: COLORS.lime, textShadow: "0 0 6px rgba(212,255,63,0.55)", letterSpacing: "0.06em" }}>
+            {n.text}
+          </span>
+          <span className="mx-6" style={{ color: "rgba(255,255,255,0.6)" }}>●</span>
+        </span>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="ticker-wrap flex items-stretch" style={{ background: "#0a1f1c", borderBottom: "1px solid rgba(212,255,63,0.25)" }}>
+      <style>{`
+        @keyframes ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .ticker-track { display: inline-flex; white-space: nowrap; animation: ticker-scroll ${duration}s linear infinite; }
+        .ticker-wrap:hover .ticker-track, .ticker-wrap:active .ticker-track { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } }
+      `}</style>
+      <div className="shrink-0 flex items-center gap-1.5 px-3 text-[10px] font-bold" style={{ background: COLORS.lime, color: COLORS.ink }}>
+        <Megaphone size={12} /> AVISOS
+      </div>
+      <div className="overflow-hidden flex-1 py-2">
+        <div className="ticker-track text-xs">
+          {copy("a")}
+          {copy("b")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GuestLocked({ onIngresar }) {
   return (
     <div className="pt-16 px-4 text-center">
@@ -1234,7 +1284,93 @@ function EmptyState({ text }) {
   );
 }
 
-function NoticiasView({ news, me, showToast, highlightId }) {
+function NoticesAdminPanel({ notices, showToast }) {
+  const [text, setText] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const MAX = 140;
+
+  const add = async () => {
+    setError("");
+    if (!text.trim()) return setError("Escribí el aviso.");
+    if (text.trim().length > MAX) return setError(`Máximo ${MAX} caracteres.`);
+    setBusy(true);
+    try {
+      await addNotice({
+        text: text.trim(),
+        expiresAt: expiresAt || null,
+        createdAt: Date.now(),
+      });
+      setText("");
+      setExpiresAt("");
+      showToast("Aviso agregado al cartel.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (n) => {
+    if (!window.confirm("¿Borrar este aviso del cartel?")) return;
+    await deleteNotice(n.id);
+    showToast("Aviso borrado.");
+  };
+
+  const sorted = [...notices].sort((a, b) => b.createdAt - a.createdAt);
+
+  return (
+    <div className="bg-white rounded-xl p-3.5 shadow-sm border mb-4" style={{ borderColor: "#eee" }}>
+      <div className="text-xs font-semibold mb-1 flex items-center gap-1.5" style={{ color: COLORS.courtDeep }}>
+        <Megaphone size={13} /> Cartel de avisos (admin)
+      </div>
+      <div className="text-[11px] text-black/45 mb-2.5 leading-relaxed">
+        Mensajes cortos que van pasando en el cartel de arriba. Ej: "Miércoles 7 de octubre cae el asado".
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Escribí el aviso"
+        rows={2}
+        maxLength={MAX}
+        className="w-full border rounded-lg px-3 py-2 text-sm mb-1 resize-none"
+      />
+      <div className="text-[10px] text-black/35 text-right mb-2">{text.length}/{MAX}</div>
+      <div className="mb-2">
+        <div className="text-[10px] text-black/40 mb-1">Mostrar hasta (opcional, después se saca solo)</div>
+        <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="border rounded-lg px-3 py-2 text-sm w-full" />
+      </div>
+      {error && <div className="text-xs mb-2" style={{ color: COLORS.clay }}>{error}</div>}
+      <button disabled={busy} onClick={add} className="w-full py-2 rounded-lg text-xs font-semibold disabled:opacity-50" style={{ background: COLORS.lime, color: COLORS.ink }}>
+        {busy ? "Agregando…" : "Agregar al cartel"}
+      </button>
+
+      {sorted.length > 0 && (
+        <div className="mt-3.5 pt-3 border-t space-y-1.5" style={{ borderColor: "#f1f1f1" }}>
+          {sorted.map((n) => {
+            const active = isNoticeActive(n);
+            return (
+              <div key={n.id} className="flex items-start gap-2 bg-black/[0.03] rounded-lg px-2.5 py-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs leading-snug" style={{ color: active ? COLORS.ink : "#999" }}>{n.text}</div>
+                  <div className="text-[10px] text-black/35 mt-0.5">
+                    {n.expiresAt ? `Hasta ${fmtDate(n.expiresAt)}` : "Sin vencimiento"}
+                    {!active && <span className="ml-1.5 font-semibold" style={{ color: COLORS.clay }}>· vencido</span>}
+                  </div>
+                </div>
+                <button onClick={() => remove(n)} title="Borrar aviso" className="p-1 rounded-md hover:bg-black/5 shrink-0" style={{ color: COLORS.clay }}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NoticiasView({ news, notices, me, showToast, highlightId }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
@@ -1308,6 +1444,8 @@ function NoticiasView({ news, me, showToast, highlightId }) {
         <Newspaper size={18} style={{ color: COLORS.courtDeep }} />
         <h2 className="font-display text-2xl" style={{ color: COLORS.ink }}>NOTICIAS</h2>
       </div>
+
+      {me?.isAdmin && <NoticesAdminPanel notices={notices} showToast={showToast} />}
 
       {me?.isAdmin && (
         <div className="bg-white rounded-xl p-3.5 shadow-sm border mb-4" style={{ borderColor: "#eee" }}>
